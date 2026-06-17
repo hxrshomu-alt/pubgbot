@@ -192,7 +192,7 @@ client.once("ready", async () => {
   updateStats();
   setInterval(updateStats, 5 * 60 * 1000);
 
-  const CHANNEL_ID = "PUT_CHANNEL_ID_HERE";
+  const CHANNEL_ID = "1366013620294783096";
   const channel = await client.channels.fetch(CHANNEL_ID);
 
   startDailyReset(channel);
