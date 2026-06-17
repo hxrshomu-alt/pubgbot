@@ -19,23 +19,7 @@ const CHANNEL_ID = "1366013620294783098";
 const players = [
   "_I_3u6a_I","o__XyHTA__o","oLex_body88","amatera150","Andriij95",
   "Apostol9477","Ar_mg11","agressorU","astral-carving97","B1ggie_Doggie",
-  "Bigboss-monax","bo_vert","Bogoo30_top","byTop69","CalmKeyboard",
-  "DBOZH777","dddennn007","De_Sher","Denny4308","Dimon4es",
-  "DonovanEz","Dostojnij","Dreamer6965783","EbliVaya_suczara","EnderOrbi",
-  "Ernesto_Mussolin","Forvard_365","Friz4954","furtive_razor68","gervontadavis669",
-  "glue_nursing12","GN1DAGAMESOVER","Goldengames6458","graaatiis_","Il_FireGhost_Il",
-  "Illau112VIP8775","IMMORTAL_CROW_","ImTayson556","k0l0bakich","Kevin781580",
-  "KibRaffin","king_myk-","koromyslo_andrei","kot_7711","Kotyh0r0shk0",
-  "kukin7567","leafless_rise4","Mania4eLo","Marazaro","MatematikX",
-  "mely-glib","Morpeh_Alex97","Movnyk","Nik_vich","Oops_FREEMAN",
-  "osadchyidaniil","OxyCont8529","pally_gaiter1","panjijko","Papu1ay8888",
-  "PoolManUA","prim_progress2","pro100tak7","Private_TTV","Raddead2544",
-  "RazorVoyage333","Roman1117906","RyRa3232","Sasha112VIP","Schokk_777",
-  "SCHWARZENOLD","Shadow22UA","sk0_0nsik","sociopath39","sound-panicle58",
-  "Stepion5732","StoneIsand-47","SuSPECT3880","Swat_UA27","Taras_mozil",
-  "trendy-plunger38","Treendyy","Trudovyk","tToni4433","ufny-ognik",
-  "Ukra1n1ans","V_I_R_U_S__0_0","Vaka-maka-fo","vano_vanchik","VladosKeks98",
-  "VolotsiugaX","w0nderful1632","xxEGOISTxxUA","Zakarpartec"
+  
 ];
 
 // 📊 DATA
