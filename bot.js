@@ -29,10 +29,11 @@ const players = [
   "dines202150"
 ];
 
-// 📊 DAILY STORAGE
+// 📊 DAILY DATA
 let dailyStats = {};
+let previousStats = {};
 
-// 🔥 CACHE (anti 429)
+// 🔥 CACHE
 const cache = new Map();
 const CACHE_TIME = 2 * 60 * 1000;
 
@@ -50,7 +51,7 @@ async function apiGet(url) {
   });
 }
 
-// ===================== STATS =====================
+// ===================== GET STATS =====================
 async function getStats(name) {
   const cached = cache.get(name);
   if (cached && Date.now() - cached.time < CACHE_TIME) {
@@ -99,20 +100,24 @@ async function getStats(name) {
   return best;
 }
 
-// ===================== UPDATE LOOP =====================
+// ===================== UPDATE LOOP (DELTA) =====================
 async function updateStats() {
   for (const name of players) {
     const data = await getStats(name);
     if (!data) continue;
 
+    const prev = previousStats[name] || data;
+
     dailyStats[name] = {
-      kills: data.kills,
-      wins: data.wins,
-      matches: data.matches
+      kills: data.kills - prev.kills,
+      wins: data.wins - prev.wins,
+      matches: data.matches - prev.matches
     };
+
+    previousStats[name] = data;
   }
 
-  console.log("📊 Stats updated");
+  console.log("📊 Daily stats updated (DELTA)");
 }
 
 // ===================== MVP =====================
@@ -122,7 +127,7 @@ function getMVP() {
   for (const name in dailyStats) {
     const p = dailyStats[name];
 
-    const score = p.kills + p.wins * 5;
+    const score = (p.kills || 0) + (p.wins || 0) * 5;
 
     if (!best || score > best.score) {
       best = { name, ...p, score };
@@ -132,30 +137,10 @@ function getMVP() {
   return best;
 }
 
-// ===================== DAILY POST =====================
-function startDailyMVP(channel) {
-  setInterval(() => {
-    const now = new Date();
-
-    if (now.getHours() === 0 && now.getMinutes() === 0) {
-      const mvp = getMVP();
-      if (!mvp) return;
-
-      const embed = new EmbedBuilder()
-        .setTitle("🏆 MVP OF THE DAY")
-        .setColor(0xffd700)
-        .setDescription(`🔥 **${mvp.name}**`)
-        .addFields(
-          { name: "Kills", value: String(mvp.kills), inline: true },
-          { name: "Wins", value: String(mvp.wins), inline: true },
-          { name: "Matches", value: String(mvp.matches), inline: true }
-        );
-
-      channel.send({ embeds: [embed] });
-
-      dailyStats = {};
-    }
-  }, 60 * 1000);
+// ===================== DAILY RESET =====================
+function resetDaily() {
+  dailyStats = {};
+  console.log("🔄 Daily stats reset");
 }
 
 // ===================== READY =====================
@@ -165,11 +150,8 @@ client.once("ready", () => {
   updateStats();
   setInterval(updateStats, 5 * 60 * 1000);
 
-  const channel = client.channels.cache.first();
-
-  if (channel) {
-    startDailyMVP(channel);
-  }
+  // reset every 24h
+  setInterval(resetDaily, 24 * 60 * 60 * 1000);
 });
 
 // ===================== COMMANDS =====================
@@ -186,18 +168,23 @@ client.on("messageCreate", async (message) => {
 
   if (message.content === "!mvp") {
     const mvp = getMVP();
-    if (!mvp) return message.reply("No data yet");
+
+    if (!mvp || mvp.score === 0) {
+      return message.reply("⏳ ще немає активності за сьогодні");
+    }
 
     const embed = new EmbedBuilder()
-      .setTitle("🏆 CURRENT MVP")
+      .setTitle("🏆 MVP TODAY")
       .setDescription(`🔥 ${mvp.name}`)
       .addFields(
         { name: "Kills", value: String(mvp.kills), inline: true },
-        { name: "Wins", value: String(mvp.wins), inline: true }
+        { name: "Wins", value: String(mvp.wins), inline: true },
+        { name: "Score", value: String(mvp.score), inline: true }
       );
 
     return message.reply({ embeds: [embed] });
   }
 });
 
+// ===================== LOGIN =====================
 client.login(process.env.DISCORD_TOKEN);
