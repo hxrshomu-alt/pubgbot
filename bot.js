@@ -9,107 +9,33 @@ const client = new Client({
   ]
 });
 
+// 🔑 PUBG API
 const API_KEY = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJqdGkiOiIyYTc2ZDc0MC00Y2ExLTAxM2YtNTYyYS0yNjA4ZjgwMTViOTQiLCJpc3MiOiJnYW1lbG9ja2VyIiwiaWF0IjoxNzgxNzE3ODYxLCJwdWIiOiJibHVlaG9sZSIsInRpdGxlIjoicHViZyIsImFwcCI6Ii00Y2I0OTIzZi1mNTU5LTRhN2YtYjQ2Mi05YTc1NTM3NjA4MjkifQ.XCI-aovgx3l63LcJfHrlaZbKQ1bMRMrpOiDG6lOJtFY";
 
 // 👥 CLAN
 const players = [
-  "_I_3u6a_I",
-  "o__XyHTA__o",
-  "oLex_body88",
-  "amatera150",
-  "Andriij95",
-  "Apostol9477",
-  "Ar_mg11",
-  "agressorU",
-  "astral-carving97",
-  "B1ggie_Doggie",
-  "Bigboss-monax",
-  "bo_vert",
-  "Bogoo30_top",
-  "byTop69",
-  "CalmKeyboard",
-  "DBOZH777",
-  "dddennn007",
-  "De_Sher",
-  "Denny4308",
-  "Dimon4es",
-  "DonovanEz",
-  "Dostojnij",
-  "Dreamer6965783",
-  "EbliVaya_suczara",
-  "EnderOrbi",
-  "Ernesto_Mussolin",
-  "Forvard_365",
-  "Friz4954",
-  "furtive_razor68",
-  "gervontadavis669",
-  "glue_nursing12",
-  "GN1DAGAMESOVER",
-  "Goldengames6458",
-  "graaatiis_",
-  "Il_FireGhost_Il",
-  "Illau112VIP8775",
-  "IMMORTAL_CROW_",
-  "ImTayson556",
-  "k0l0bakich",
-  "Kevin781580",
-  "KibRaffin",
-  "king_myk-",
-  "koromyslo_andrei",
-  "kot_7711",
-  "Kotyh0r0shk0",
-  "kukin7567",
-  "leafless_rise4",
-  "Mania4eLo",
-  "Marazaro",
-  "MatematikX",
-  "mely-glib",
-  "Morpeh_Alex97",
-  "Movnyk",
-  "Nik_vich",
-  "Oops_FREEMAN",
-  "osadchyidaniil",
-  "OxyCont8529",
-  "pally_gaiter1",
-  "panjijko",
-  "Papu1ay8888",
-  "PoolManUA",
-  "prim_progress2",
-  "pro100tak7",
-  "Private_TTV",
-  "Raddead2544",
-  "RazorVoyage333",
-  "Roman1117906",
-  "RyRa3232",
-  "Sasha112VIP",
-  "Schokk_777",
-  "SCHWARZENOLD",
-  "Shadow22UA",
-  "sk0_0nsik",
-  "sociopath39",
-  "sound-panicle58",
-  "Stepion5732",
-  "StoneIsand-47",
-  "SuSPECT3880",
-  "Swat_UA27",
-  "Taras_mozil",
-  "trendy-plunger38",
-  "Treendyy",
-  "Trudovyk",
-  "tToni4433",
-  "ufny-ognik",
-  "Ukra1n1ans",
-  "V_I_R_U_S__0_0",
-  "Vaka-maka-fo",
-  "vano_vanchik",
-  "VladosKeks98",
-  "VolotsiugaX",
-  "w0nderful1632",
-  "xxEGOISTxxUA",
-  "Zakarpartec"
+  "_I_3u6a_I","o__XyHTA__o","oLex_body88","amatera150","Andriij95",
+  "Apostol9477","Ar_mg11","agressorU","astral-carving97","B1ggie_Doggie",
+  "Bigboss-monax","bo_vert","Bogoo30_top","byTop69","CalmKeyboard",
+  "DBOZH777","dddennn007","De_Sher","Denny4308","Dimon4es",
+  "DonovanEz","Dostojnij","Dreamer6965783","EbliVaya_suczara","EnderOrbi",
+  "Ernesto_Mussolin","Forvard_365","Friz4954","furtive_razor68","gervontadavis669",
+  "glue_nursing12","GN1DAGAMESOVER","Goldengames6458","graaatiis_","Il_FireGhost_Il",
+  "Illau112VIP8775","IMMORTAL_CROW_","ImTayson556","k0l0bakich","Kevin781580",
+  "KibRaffin","king_myk-","koromyslo_andrei","kot_7711","Kotyh0r0shk0",
+  "kukin7567","leafless_rise4","Mania4eLo","Marazaro","MatematikX",
+  "mely-glib","Morpeh_Alex97","Movnyk","Nik_vich","Oops_FREEMAN",
+  "osadchyidaniil","OxyCont8529","pally_gaiter1","panjijko","Papu1ay8888",
+  "PoolManUA","prim_progress2","pro100tak7","Private_TTV","Raddead2544",
+  "RazorVoyage333","Roman1117906","RyRa3232","Sasha112VIP","Schokk_777",
+  "SCHWARZENOLD","Shadow22UA","sk0_0nsik","sociopath39","sound-panicle58",
+  "Stepion5732","StoneIsand-47","SuSPECT3880","Swat_UA27","Taras_mozil",
+  "trendy-plunger38","Treendyy","Trudovyk","tToni4433","ufny-ognik",
+  "Ukra1n1ans","V_I_R_U_S__0_0","Vaka-maka-fo","vano_vanchik","VladosKeks98",
+  "VolotsiugaX","w0nderful1632","xxEGOISTxxUA","Zakarpartec"
 ];
 
-// 📊 DAILY DATA
+// 📊 DATA
 let dailyStats = {};
 let previousStats = {};
 
@@ -119,9 +45,9 @@ const CACHE_TIME = 2 * 60 * 1000;
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-// ===================== API =====================
+// ================= API =================
 async function apiGet(url) {
-  await sleep(800);
+  await sleep(700);
 
   return axios.get(url, {
     headers: {
@@ -131,7 +57,7 @@ async function apiGet(url) {
   });
 }
 
-// ===================== GET STATS =====================
+// ================= GET STATS =================
 async function getStats(name) {
   const cached = cache.get(name);
   if (cached && Date.now() - cached.time < CACHE_TIME) {
@@ -156,9 +82,7 @@ async function getStats(name) {
 
       const modes = statsRes.data.data.attributes.gameModeStats;
 
-      let kills = 0;
-      let wins = 0;
-      let matches = 0;
+      let kills = 0, wins = 0, matches = 0;
 
       for (const m in modes) {
         kills += modes[m].kills || 0;
@@ -180,7 +104,7 @@ async function getStats(name) {
   return best;
 }
 
-// ===================== UPDATE LOOP (DELTA) =====================
+// ================= UPDATE DELTA =================
 async function updateStats() {
   for (const name of players) {
     const data = await getStats(name);
@@ -197,44 +121,84 @@ async function updateStats() {
     previousStats[name] = data;
   }
 
-  console.log("📊 Daily stats updated (DELTA)");
+  console.log("📊 Updated delta stats");
 }
 
-// ===================== MVP =====================
-function getMVP() {
-  let best = null;
+// ================= MVP TOP 3 =================
+function getTopMVP() {
+  const results = [];
 
   for (const name in dailyStats) {
     const p = dailyStats[name];
 
     const score = (p.kills || 0) + (p.wins || 0) * 5;
 
-    if (!best || score > best.score) {
-      best = { name, ...p, score };
-    }
+    results.push({
+      name,
+      kills: p.kills || 0,
+      wins: p.wins || 0,
+      matches: p.matches || 0,
+      score
+    });
   }
 
-  return best;
+  return results.sort((a, b) => b.score - a.score).slice(0, 3);
 }
 
-// ===================== DAILY RESET =====================
+// ================= RESET =================
 function resetDaily() {
   dailyStats = {};
-  console.log("🔄 Daily stats reset");
+  previousStats = {};
+  console.log("🔄 Daily reset done");
 }
 
-// ===================== READY =====================
-client.once("ready", () => {
+// ================= 00:00 SCHEDULER =================
+function startDailyReset(channel) {
+  setInterval(() => {
+    const now = new Date();
+
+    if (now.getHours() === 0 && now.getMinutes() === 0) {
+
+      const top = getTopMVP();
+
+      if (top.length) {
+        const medals = ["🥇", "🥈", "🥉"];
+
+        let desc = "";
+
+        top.forEach((p, i) => {
+          desc += `${medals[i]} **${p.name}**\n`;
+          desc += `🔫 ${p.kills} | 🍗 ${p.wins} | 📊 ${p.score}\n\n`;
+        });
+
+        const embed = new EmbedBuilder()
+          .setTitle("🏆 MVP OF THE DAY")
+          .setColor(0xffd700)
+          .setDescription(desc);
+
+        channel.send({ embeds: [embed] });
+      }
+
+      resetDaily();
+    }
+
+  }, 60 * 1000);
+}
+
+// ================= READY =================
+client.once("ready", async () => {
   console.log(`Logged in as ${client.user.tag}`);
 
   updateStats();
   setInterval(updateStats, 5 * 60 * 1000);
 
-  // reset every 24h
-  setInterval(resetDaily, 24 * 60 * 60 * 1000);
+  const CHANNEL_ID = "PUT_CHANNEL_ID_HERE";
+  const channel = await client.channels.fetch(CHANNEL_ID);
+
+  startDailyReset(channel);
 });
 
-// ===================== COMMANDS =====================
+// ================= COMMANDS =================
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
@@ -247,24 +211,28 @@ client.on("messageCreate", async (message) => {
   }
 
   if (message.content === "!mvp") {
-    const mvp = getMVP();
+    const top = getTopMVP();
 
-    if (!mvp || mvp.score === 0) {
-      return message.reply("⏳ ще немає активності за сьогодні");
-    }
+    if (!top.length) return message.reply("⏳ no data yet");
+
+    const medals = ["🥇","🥈","🥉"];
 
     const embed = new EmbedBuilder()
-      .setTitle("🏆 MVP TODAY")
-      .setDescription(`🔥 ${mvp.name}`)
-      .addFields(
-        { name: "Kills", value: String(mvp.kills), inline: true },
-        { name: "Wins", value: String(mvp.wins), inline: true },
-        { name: "Score", value: String(mvp.score), inline: true }
-      );
+      .setTitle("🏆 TOP 3 MVP (TODAY)")
+      .setColor(0xffd700);
+
+    let desc = "";
+
+    top.forEach((p, i) => {
+      desc += `${medals[i]} **${p.name}**\n`;
+      desc += `🔫 ${p.kills} | 🍗 ${p.wins} | 📊 ${p.score}\n\n`;
+    });
+
+    embed.setDescription(desc);
 
     return message.reply({ embeds: [embed] });
   }
 });
 
-// ===================== LOGIN =====================
+// ================= LOGIN =================
 client.login(process.env.DISCORD_TOKEN);
