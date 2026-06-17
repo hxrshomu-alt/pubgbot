@@ -50,7 +50,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // ================= API =================
 async function apiGet(url) {
-  await sleep(700);
+  await sleep(600);
 
   return axios.get(url, {
     headers: {
@@ -67,23 +67,25 @@ async function getStats(name) {
     return cached.data;
   }
 
-  const platforms = ["psn", "xbox"];
+  const platforms = ["steam", "psn", "xbox"];
   let best = null;
 
   for (const platform of platforms) {
     try {
       const playerRes = await apiGet(
-        `https://api.pubg.com/shards/${platform}/players?filter[playerNames]=${name}`
+        `https://api.pubg.com/shards/${platform}/players?filter[playerNames]=${encodeURIComponent(name)}`
       );
 
-      const player = playerRes.data.data?.[0];
+      const player = playerRes.data?.data?.[0];
       if (!player) continue;
 
       const statsRes = await apiGet(
         `https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/lifetime`
       );
 
-      const modes = statsRes.data.data.attributes.gameModeStats;
+      const modes = statsRes.data?.data?.attributes?.gameModeStats;
+
+      if (!modes) continue;
 
       let kills = 0, wins = 0, matches = 0;
 
@@ -95,9 +97,14 @@ async function getStats(name) {
 
       const result = { kills, wins, matches, platform };
 
-      if (!best || result.kills > best.kills) best = result;
+      if (!best || result.kills > best.kills) {
+        best = result;
+      }
 
-    } catch (err) {}
+    } catch (err) {
+      console.log(`❌ PUBG API error [${platform}] ${name}:`,
+        err.response?.status || err.message);
+    }
   }
 
   if (best) {
@@ -164,7 +171,7 @@ function startDailyMVP(channel) {
       const top = getTopMVP();
 
       if (top.length) {
-        const medals = ["🥇", "🥈", "🥉"];
+        const medals = ["🥇","🥈","🥉"];
 
         let desc = "";
 
@@ -178,7 +185,7 @@ function startDailyMVP(channel) {
           .setColor(0xffd700)
           .setDescription(desc);
 
-        channel.send({ embeds: [embed] });
+        channel.send({ embeds: [embed] }).catch(console.error);
       }
 
       resetDaily();
@@ -193,9 +200,12 @@ client.once("ready", async () => {
   updateStats();
   setInterval(updateStats, 5 * 60 * 1000);
 
-  const channel = await client.channels.fetch(CHANNEL_ID).catch(() => null);
-
-  if (channel) startDailyMVP(channel);
+  try {
+    const channel = await client.channels.fetch(CHANNEL_ID);
+    if (channel) startDailyMVP(channel);
+  } catch (e) {
+    console.log("❌ Channel error:", e.message);
+  }
 });
 
 // ================= COMMANDS =================
@@ -212,7 +222,6 @@ client.on("messageCreate", async (message) => {
 
   if (message.content === "!mvp") {
     const top = getTopMVP();
-
     if (!top.length) return message.reply("⏳ no data yet");
 
     const medals = ["🥇","🥈","🥉"];
@@ -236,13 +245,13 @@ client.on("messageCreate", async (message) => {
   // ================= !stats =================
   if (message.content.startsWith("!stats")) {
     const name = message.content.split(" ")[1];
-
-    if (!name) return message.reply("!stats Nick");
+    if (!name) return message.reply("❌ Use: !stats nickname");
 
     const msg = await message.reply("⏳ loading...");
 
     const data = await getStats(name);
-    if (!data) return msg.edit("❌ not found");
+
+    if (!data) return msg.edit("❌ Player not found");
 
     const kd = (data.kills / (data.matches || 1)).toFixed(2);
 
@@ -254,8 +263,7 @@ client.on("messageCreate", async (message) => {
         { name: "Wins", value: String(data.wins), inline: true },
         { name: "Matches", value: String(data.matches), inline: true },
         { name: "K/D", value: kd, inline: true }
-      )
-      .setFooter({ text: "PUBG clan bot" });
+      );
 
     msg.edit({ content: "✅ done", embeds: [embed] });
   }
