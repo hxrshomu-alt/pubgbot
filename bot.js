@@ -29,13 +29,16 @@ const players = [
   "dines202150"
 ];
 
-// 🧠 CACHE (важливо для 429)
+// 📊 DAILY STORAGE
+let dailyStats = {};
+
+// 🔥 CACHE (anti 429)
 const cache = new Map();
-const CACHE_TIME = 2 * 60 * 1000; // 2 хв
+const CACHE_TIME = 2 * 60 * 1000;
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-// 🧠 SAFE API CALL
+// ===================== API =====================
 async function apiGet(url) {
   await sleep(800);
 
@@ -47,7 +50,7 @@ async function apiGet(url) {
   });
 }
 
-// 🧠 GET PLAYER STATS (STABLE)
+// ===================== STATS =====================
 async function getStats(name) {
   const cached = cache.get(name);
   if (cached && Date.now() - cached.time < CACHE_TIME) {
@@ -55,7 +58,6 @@ async function getStats(name) {
   }
 
   const platforms = ["psn", "xbox"];
-
   let best = null;
 
   for (const platform of platforms) {
@@ -85,15 +87,9 @@ async function getStats(name) {
 
       const result = { kills, wins, matches, platform };
 
-      if (!best || result.kills > best.kills) {
-        best = result;
-      }
+      if (!best || result.kills > best.kills) best = result;
 
-    } catch (err) {
-      if (err.response?.status !== 404) {
-        console.log("API error:", err.response?.status || err.message);
-      }
-    }
+    } catch (err) {}
   }
 
   if (best) {
@@ -103,36 +99,80 @@ async function getStats(name) {
   return best;
 }
 
-// 🏆 TOP 10 (STABLE)
-async function getTopPlayers() {
-  const results = [];
-
+// ===================== UPDATE LOOP =====================
+async function updateStats() {
   for (const name of players) {
     const data = await getStats(name);
+    if (!data) continue;
 
-    // ❗ НЕ ВИКИДАЄМО ГРАВЦЯ → завжди стабільний топ
-    results.push({
-      name,
-      kills: data?.kills || 0,
-      wins: data?.wins || 0,
-      matches: data?.matches || 0,
-      kd: data?.matches ? data.kills / data.matches : 0
-    });
-
-    await sleep(900);
+    dailyStats[name] = {
+      kills: data.kills,
+      wins: data.wins,
+      matches: data.matches
+    };
   }
 
-  return results
-    .sort((a, b) => b.kills - a.kills)
-    .slice(0, 10);
+  console.log("📊 Stats updated");
 }
 
-// 🤖 READY
+// ===================== MVP =====================
+function getMVP() {
+  let best = null;
+
+  for (const name in dailyStats) {
+    const p = dailyStats[name];
+
+    const score = p.kills + p.wins * 5;
+
+    if (!best || score > best.score) {
+      best = { name, ...p, score };
+    }
+  }
+
+  return best;
+}
+
+// ===================== DAILY POST =====================
+function startDailyMVP(channel) {
+  setInterval(() => {
+    const now = new Date();
+
+    if (now.getHours() === 0 && now.getMinutes() === 0) {
+      const mvp = getMVP();
+      if (!mvp) return;
+
+      const embed = new EmbedBuilder()
+        .setTitle("🏆 MVP OF THE DAY")
+        .setColor(0xffd700)
+        .setDescription(`🔥 **${mvp.name}**`)
+        .addFields(
+          { name: "Kills", value: String(mvp.kills), inline: true },
+          { name: "Wins", value: String(mvp.wins), inline: true },
+          { name: "Matches", value: String(mvp.matches), inline: true }
+        );
+
+      channel.send({ embeds: [embed] });
+
+      dailyStats = {};
+    }
+  }, 60 * 1000);
+}
+
+// ===================== READY =====================
 client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}`);
+
+  updateStats();
+  setInterval(updateStats, 5 * 60 * 1000);
+
+  const channel = client.channels.cache.first();
+
+  if (channel) {
+    startDailyMVP(channel);
+  }
 });
 
-// 💬 COMMANDS
+// ===================== COMMANDS =====================
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
@@ -144,50 +184,19 @@ client.on("messageCreate", async (message) => {
     return message.reply(players.join("\n"));
   }
 
-  if (message.content === "!top") {
-    const msg = await message.reply("⏳ loading TOP 10...");
-    const top = await getTopPlayers();
+  if (message.content === "!mvp") {
+    const mvp = getMVP();
+    if (!mvp) return message.reply("No data yet");
 
     const embed = new EmbedBuilder()
-      .setTitle("🏆 CLAN TOP 10")
-      .setColor(0xffcc00)
-      .setFooter({ text: "by sociopath39" });
-
-    let desc = "";
-
-    top.forEach((p, i) => {
-      desc += `**${i + 1}. ${p.name}**\n`;
-      desc += `🔫 Kills: ${p.kills} | 🍗 Wins: ${p.wins} | 📊 K/D: ${p.kd.toFixed(2)}\n\n`;
-    });
-
-    embed.setDescription(desc);
-
-    msg.edit({ content: "✅ ready", embeds: [embed] });
-  }
-
-  if (message.content.startsWith("!stats")) {
-    const name = message.content.split(" ")[1];
-    if (!name) return message.reply("!stats Nick");
-
-    const msg = await message.reply("⏳ loading...");
-
-    const data = await getStats(name);
-    if (!data) return msg.edit("❌ not found");
-
-    const kd = (data.kills / (data.matches || 1)).toFixed(2);
-
-    const embed = new EmbedBuilder()
-      .setTitle("🏆 PLAYER STATS")
-      .setDescription(`${name} (${data.platform})`)
+      .setTitle("🏆 CURRENT MVP")
+      .setDescription(`🔥 ${mvp.name}`)
       .addFields(
-        { name: "Kills", value: String(data.kills), inline: true },
-        { name: "Wins", value: String(data.wins), inline: true },
-        { name: "Matches", value: String(data.matches), inline: true },
-        { name: "K/D", value: kd, inline: true }
-      )
-      .setFooter({ text: "by sociopath39" });
+        { name: "Kills", value: String(mvp.kills), inline: true },
+        { name: "Wins", value: String(mvp.wins), inline: true }
+      );
 
-    msg.edit({ content: "✅ done", embeds: [embed] });
+    return message.reply({ embeds: [embed] });
   }
 });
 
