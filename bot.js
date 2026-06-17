@@ -12,6 +12,9 @@ const client = new Client({
 // 🔑 PUBG API
 const API_KEY = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJqdGkiOiIyYTc2ZDc0MC00Y2ExLTAxM2YtNTYyYS0yNjA4ZjgwMTViOTQiLCJpc3MiOiJnYW1lbG9ja2VyIiwiaWF0IjoxNzgxNzE3ODYxLCJwdWIiOiJibHVlaG9sZSIsInRpdGxlIjoicHViZyIsImFwcCI6Ii00Y2I0OTIzZi1mNTU5LTRhN2YtYjQ2Mi05YTc1NTM3NjA4MjkifQ.XCI-aovgx3l63LcJfHrlaZbKQ1bMRMrpOiDG6lOJtFY";
 
+// 📢 ВАЖЛИВО: встав реальний channel ID
+const CHANNEL_ID = "1366013620294783096";
+
 // 👥 CLAN
 const players = [
   "_I_3u6a_I","o__XyHTA__o","oLex_body88","amatera150","Andriij95",
@@ -43,9 +46,7 @@ let previousStats = {};
 const cache = new Map();
 const CACHE_TIME = 2 * 60 * 1000;
 
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
-// ================= API =================
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));// ================= API =================
 async function apiGet(url) {
   await sleep(700);
 
@@ -104,7 +105,7 @@ async function getStats(name) {
   return best;
 }
 
-// ================= UPDATE DELTA =================
+// ================= UPDATE STATS =================
 async function updateStats() {
   for (const name of players) {
     const data = await getStats(name);
@@ -113,18 +114,18 @@ async function updateStats() {
     const prev = previousStats[name] || data;
 
     dailyStats[name] = {
-      kills: data.kills - prev.kills,
-      wins: data.wins - prev.wins,
-      matches: data.matches - prev.matches
+      kills: Math.max(0, data.kills - prev.kills),
+      wins: Math.max(0, data.wins - prev.wins),
+      matches: Math.max(0, data.matches - prev.matches)
     };
 
     previousStats[name] = data;
   }
 
-  console.log("📊 Updated delta stats");
+  console.log("📊 Stats updated");
 }
 
-// ================= MVP TOP 3 =================
+// ================= TOP 3 MVP =================
 function getTopMVP() {
   const results = [];
 
@@ -152,36 +153,38 @@ function resetDaily() {
   console.log("🔄 Daily reset done");
 }
 
-// ================= 00:00 SCHEDULER =================
-function startDailyReset(channel) {
+// ================= DAILY CHECK =================
+function startDailyMVP(channel) {
   setInterval(() => {
-    const now = new Date();
+    try {
+      const now = new Date();
 
-    if (now.getHours() === 0 && now.getMinutes() === 0) {
+      if (now.getHours() === 0 && now.getMinutes() === 0) {
+        const top = getTopMVP();
 
-      const top = getTopMVP();
+        if (top.length) {
+          const medals = ["🥇", "🥈", "🥉"];
 
-      if (top.length) {
-        const medals = ["🥇", "🥈", "🥉"];
+          let desc = "";
 
-        let desc = "";
+          top.forEach((p, i) => {
+            desc += `${medals[i]} **${p.name}**\n`;
+            desc += `🔫 ${p.kills} | 🍗 ${p.wins} | 📊 ${p.score}\n\n`;
+          });
 
-        top.forEach((p, i) => {
-          desc += `${medals[i]} **${p.name}**\n`;
-          desc += `🔫 ${p.kills} | 🍗 ${p.wins} | 📊 ${p.score}\n\n`;
-        });
+          const embed = new EmbedBuilder()
+            .setTitle("🏆 MVP OF THE DAY")
+            .setColor(0xffd700)
+            .setDescription(desc);
 
-        const embed = new EmbedBuilder()
-          .setTitle("🏆 MVP OF THE DAY")
-          .setColor(0xffd700)
-          .setDescription(desc);
+          channel.send({ embeds: [embed] }).catch(() => {});
+        }
 
-        channel.send({ embeds: [embed] });
+        resetDaily();
       }
-
-      resetDaily();
+    } catch (err) {
+      console.log("Scheduler error:", err.message);
     }
-
   }, 60 * 1000);
 }
 
@@ -189,13 +192,21 @@ function startDailyReset(channel) {
 client.once("ready", async () => {
   console.log(`Logged in as ${client.user.tag}`);
 
-  updateStats();
-  setInterval(updateStats, 5 * 60 * 1000);
+  try {
+    updateStats();
+    setInterval(updateStats, 5 * 60 * 1000);
 
-  const CHANNEL_ID = "1366013620294783096";
-  const channel = await client.channels.fetch(CHANNEL_ID);
+    const channel = await client.channels.fetch(CHANNEL_ID).catch(() => null);
 
-  startDailyReset(channel);
+    if (channel) {
+      startDailyMVP(channel);
+    } else {
+      console.log("❌ Channel not found or bot has no access");
+    }
+
+  } catch (err) {
+    console.log("READY ERROR:", err.message);
+  }
 });
 
 // ================= COMMANDS =================
@@ -215,7 +226,7 @@ client.on("messageCreate", async (message) => {
 
     if (!top.length) return message.reply("⏳ no data yet");
 
-    const medals = ["🥇","🥈","🥉"];
+    const medals = ["🥇", "🥈", "🥉"];
 
     const embed = new EmbedBuilder()
       .setTitle("🏆 TOP 3 MVP (TODAY)")
