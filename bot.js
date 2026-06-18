@@ -18,8 +18,7 @@ const CHANNEL_ID = "1366013620294783098";
 // 👥 CLAN
 const players = [
   "_I_3u6a_I","o__XyHTA__o","oLex_body88","amatera150","Andriij95",
-  "Apostol9477","Ar_mg11","agressorU","astral-carving97","B1ggie_Doggie",
-  
+  "Apostol9477","Ar_mg11","agressorU","astral-carving97","B1ggie_Doggie"
 ];
 
 // 📊 DATA
@@ -63,27 +62,43 @@ async function getStats(name) {
       const player = playerRes.data?.data?.[0];
       if (!player) continue;
 
+      const createdAt = player.attributes?.createdAt;
+      const accountDays = createdAt
+        ? Math.floor((Date.now() - new Date(createdAt)) / (1000 * 60 * 60 * 24))
+        : 0;
+
       const statsRes = await apiGet(
         `https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/lifetime`
       );
 
       const modes = statsRes.data?.data?.attributes?.gameModeStats;
-
       if (!modes) continue;
 
-      let kills = 0, wins = 0, matches = 0;
+      let kills = 0, wins = 0, matches = 0, damage = 0;
 
       for (const m in modes) {
         kills += modes[m].kills || 0;
         wins += modes[m].wins || 0;
         matches += modes[m].roundsPlayed || 0;
+        damage += modes[m].damageDealt || 0;
       }
 
-      const result = { kills, wins, matches, platform };
+      const kd = matches ? kills / matches : 0;
+      const winRate = matches ? (wins / matches) * 100 : 0;
+      const adr = matches ? damage / matches : 0;
 
-      if (!best || result.kills > best.kills) {
-        best = result;
-      }
+      const result = {
+        kills,
+        wins,
+        matches,
+        platform,
+        accountDays,
+        kd,
+        winRate,
+        adr
+      };
+
+      if (!best || result.kills > best.kills) best = result;
 
     } catch (err) {
       console.log(`❌ PUBG API error [${platform}] ${name}:`,
@@ -139,44 +154,6 @@ function getTopMVP() {
   return results.sort((a, b) => b.score - a.score).slice(0, 3);
 }
 
-// ================= RESET =================
-function resetDaily() {
-  dailyStats = {};
-  previousStats = {};
-  console.log("🔄 Daily reset done");
-}
-
-// ================= DAILY MVP =================
-function startDailyMVP(channel) {
-  setInterval(() => {
-    const now = new Date();
-
-    if (now.getHours() === 0 && now.getMinutes() === 0) {
-      const top = getTopMVP();
-
-      if (top.length) {
-        const medals = ["🥇","🥈","🥉"];
-
-        let desc = "";
-
-        top.forEach((p, i) => {
-          desc += `${medals[i]} **${p.name}**\n`;
-          desc += `🔫 ${p.kills} | 🍗 ${p.wins} | 📊 ${p.score}\n\n`;
-        });
-
-        const embed = new EmbedBuilder()
-          .setTitle("🏆 MVP OF THE DAY")
-          .setColor(0xffd700)
-          .setDescription(desc);
-
-        channel.send({ embeds: [embed] }).catch(console.error);
-      }
-
-      resetDaily();
-    }
-  }, 60 * 1000);
-}
-
 // ================= READY =================
 client.once("ready", async () => {
   console.log(`Logged in as ${client.user.tag}`);
@@ -184,12 +161,8 @@ client.once("ready", async () => {
   updateStats();
   setInterval(updateStats, 5 * 60 * 1000);
 
-  try {
-    const channel = await client.channels.fetch(CHANNEL_ID);
-    if (channel) startDailyMVP(channel);
-  } catch (e) {
-    console.log("❌ Channel error:", e.message);
-  }
+  const channel = await client.channels.fetch(CHANNEL_ID).catch(() => null);
+  if (channel) console.log("MVP system active");
 });
 
 // ================= COMMANDS =================
@@ -234,10 +207,7 @@ client.on("messageCreate", async (message) => {
     const msg = await message.reply("⏳ loading...");
 
     const data = await getStats(name);
-
     if (!data) return msg.edit("❌ Player not found");
-
-    const kd = (data.kills / (data.matches || 1)).toFixed(2);
 
     const embed = new EmbedBuilder()
       .setTitle("🏆 PLAYER STATS")
@@ -246,8 +216,14 @@ client.on("messageCreate", async (message) => {
         { name: "Kills", value: String(data.kills), inline: true },
         { name: "Wins", value: String(data.wins), inline: true },
         { name: "Matches", value: String(data.matches), inline: true },
-        { name: "K/D", value: kd, inline: true }
-      );
+
+        { name: "K/D", value: data.kd.toFixed(2), inline: true },
+        { name: "Win Rate", value: `${data.winRate.toFixed(1)}%`, inline: true },
+        { name: "ADR", value: data.adr.toFixed(0), inline: true },
+
+        { name: "Account Age", value: `${data.accountDays} days`, inline: true }
+      )
+      .setFooter({ text: "by sociopath39" });
 
     msg.edit({ content: "✅ done", embeds: [embed] });
   }
