@@ -141,7 +141,7 @@ async function getStats(name) {
         const seasonId = await getCurrentSeason(platform);
 
         const rankedRes = await apiGet(
-          `https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/${season}/ranked`
+          `https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/${seasonId}/ranked`
         );
 
         const rankedStats = rankedRes.data?.data?.attributes?.rankedGameModeStats;
@@ -168,7 +168,8 @@ async function getStats(name) {
         matches,
         platform,
         rate,
-        tier        subTier,
+        tier,
+        subTier,
         rankPoints
       };
 
