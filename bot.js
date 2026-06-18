@@ -99,54 +99,37 @@ async function getStats(name) {
 
       // ================= RANKED =================
       let tier = "Unranked";
-      let subTier = "";
-      let rankPoints = 0;
+let subTier = "";
+let rankPoints = 0;
 
-      try {
-        const seasonId = await getCurrentSeason(platform);
+try {
+  const seasonId = await getCurrentSeason(platform);
 
-        const rankedRes = await apiGet(
-          `https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/${seasonId}/ranked`
-        );
+  const rankedRes = await apiGet(
+    `https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/${seasonId}/ranked`
+  );
 
-        const rankedData =
-          rankedRes.data?.data?.attributes?.rankedGameModeStats;
+  const rankedData =
+    rankedRes.data?.data?.attributes?.rankedGameModeStats;
 
-        if (rankedData) {
-          const mode =
-            rankedData["squad-fpp"] ||
-            rankedData["solo-fpp"] ||
-            rankedData["duo-fpp"];
+  if (rankedData) {
+    // 🎮 пріоритет TPP (бо ти сказав що консолі)
+    const mode =
+      rankedData["squad-tpp"] ||
+      rankedData["duo-tpp"] ||
+      rankedData["solo-tpp"] ||
+      rankedData["squad-fpp"] ||
+      rankedData["duo-fpp"] ||
+      rankedData["solo-fpp"];
 
-          if (mode) {
-            tier = mode.currentTier?.tier || "Unranked";
-            subTier = mode.currentTier?.subTier || "";
-            rankPoints = mode.currentRankPoint || 0;
-          }
-        }
-      } catch (e) {
-        // ranked optional
-      }
-
-      const result = {
-        kills,
-        wins,
-        matches,
-        createdAt,
-        platform,
-        rate,
-        tier,
-        subTier,
-        rankPoints
-      };
-
-      if (!best || result.kills > best.kills) best = result;
-
-    } catch (e) {}
+    if (mode) {
+      tier = mode.currentTier?.tier || "Unranked";
+      subTier = mode.currentTier?.subTier || "";
+      rankPoints = mode.currentRankPoint || 0;
+    }
   }
-
-  if (best) cache.set(name, { data: best, time: Date.now() });
-  return best;
+} catch (e) {
+  // ranked optional
 }
 
 // ================= !stats =================
