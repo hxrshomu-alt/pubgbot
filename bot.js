@@ -9,48 +9,47 @@ const client = new Client({
   ]
 });
 
-// 🔑 PUBG API
-const API_KEY = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJqdGkiOiIyYTc2ZDc0MC00Y2ExLTAxM2YtNTYyYS0yNjA4ZjgwMTViOTQiLCJpc3MiOiJnYW1lbG9ja2VyIiwiaWF0IjoxNzgxNzE3ODYxLCJwdWIiOiJibHVlaG9sZSIsInRpdGxlIjoicHViZyIsImFwcCI6Ii00Y2I0OTIzZi1mNTU5LTRhN2YtYjQ2Mi05YTc1NTM3NjA4MjkifQ.XCI-aovgx3l63LcJfHrlaZbKQ1bMRMrpOiDG6lOJtFY";
+// ================= CONFIG =================
+const API_KEY = process.env.PUBG_API_KEY;
 
-// 📢 CHANNEL ID
-const CHANNEL_ID = "1366013620294783098";
-
-// 👥 CLAN
 const players = [
   "_I_3u6a_I","o__XyHTA__o","oLex_body88","amatera150","Andriij95",
   "Apostol9477","Ar_mg11","agressorU","astral-carving97","B1ggie_Doggie"
 ];
 
-// 📊 DATA
-let dailyStats = {};
-let previousStats = {};
-
-// 🔥 CACHE
+// ================= CACHE =================
 const cache = new Map();
-const CACHE_TIME = 2 * 60 * 1000;
+const CACHE_TIME = 5 * 60 * 1000;
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // ================= API =================
-async function apiGet(url) {
-  await sleep(600);
+async function apiGet(url, retry = 1) {
+  try {
+    await sleep(1200);
 
-  return axios.get(url, {
-    headers: {
-      Authorization: `Bearer ${API_KEY}`,
-      Accept: "application/vnd.api+json"
+    return await axios.get(url, {
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+        Accept: "application/vnd.api+json"
+      }
+    });
+
+  } catch (err) {
+    if (err.response?.status === 429 && retry > 0) {
+      await sleep(5000);
+      return apiGet(url, retry - 1);
     }
-  });
+    throw err;
+  }
 }
 
-// ================= GET STATS =================
+// ================= GET PLAYER =================
 async function getStats(name) {
   const cached = cache.get(name);
-  if (cached && Date.now() - cached.time < CACHE_TIME) {
-    return cached.data;
-  }
+  if (cached && Date.now() - cached.time < CACHE_TIME) return cached.data;
 
-  const platforms = ["steam", "psn", "xbox"];
+  const platforms = ["psn", "xbox"];
   let best = null;
 
   for (const platform of platforms) {
@@ -63,9 +62,6 @@ async function getStats(name) {
       if (!player) continue;
 
       const createdAt = player.attributes?.createdAt;
-      const accountDays = createdAt
-        ? Math.floor((Date.now() - new Date(createdAt)) / (1000 * 60 * 60 * 24))
-        : 0;
 
       const statsRes = await apiGet(
         `https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/lifetime`
@@ -74,160 +70,79 @@ async function getStats(name) {
       const modes = statsRes.data?.data?.attributes?.gameModeStats;
       if (!modes) continue;
 
-      let kills = 0, wins = 0, matches = 0, damage = 0;
+      let kills = 0, wins = 0, matches = 0;
 
       for (const m in modes) {
         kills += modes[m].kills || 0;
         wins += modes[m].wins || 0;
         matches += modes[m].roundsPlayed || 0;
-        damage += modes[m].damageDealt || 0;
       }
 
-      const kd = matches ? kills / matches : 0;
-      const winRate = matches ? (wins / matches) * 100 : 0;
-      const adr = matches ? damage / matches : 0;
-
-      const result = {
-        kills,
-        wins,
-        matches,
-        platform,
-        accountDays,
-        kd,
-        winRate,
-        adr
-      };
+      const result = { kills, wins, matches, createdAt, platform };
 
       if (!best || result.kills > best.kills) best = result;
 
-    } catch (err) {
-      console.log(`❌ PUBG API error [${platform}] ${name}:`,
-        err.response?.status || err.message);
-    }
+    } catch (e) {}
   }
 
-  if (best) {
-    cache.set(name, { data: best, time: Date.now() });
-  }
-
+  if (best) cache.set(name, { data: best, time: Date.now() });
   return best;
 }
 
-// ================= UPDATE STATS =================
-async function updateStats() {
-  for (const name of players) {
-    const data = await getStats(name);
-    if (!data) continue;
+// ================= !stats =================
+async function handleStats(message, name) {
+  const msg = await message.reply("⏳ loading...");
 
-    const prev = previousStats[name] || data;
+  const data = await getStats(name);
+  if (!data) return msg.edit("❌ Player not found");
 
-    dailyStats[name] = {
-      kills: Math.max(0, data.kills - prev.kills),
-      wins: Math.max(0, data.wins - prev.wins),
-      matches: Math.max(0, data.matches - prev.matches)
-    };
+  const kd = (data.kills / (data.matches || 1)).toFixed(2);
+  const winrate = ((data.wins / (data.matches || 1)) * 100).toFixed(1);
 
-    previousStats[name] = data;
-  }
+  // 📅 days account
+  const days = data.createdAt
+    ? Math.floor((Date.now() - new Date(data.createdAt)) / (1000 * 60 * 60 * 24))
+    : "N/A";
 
-  console.log("📊 Stats updated");
+  // 📊 RATE
+  const rate = Math.round(
+    (data.kills * 1.2 + data.wins * 15 + kd * 10) / (data.matches || 1)
+  );
+
+  const embed = new EmbedBuilder()
+    .setTitle("🏆 PLAYER STATS")
+    .setDescription(`${name} (${data.platform})`)
+    .addFields(
+      { name: "Kills", value: String(data.kills), inline: true },
+      { name: "Matches", value: String(data.matches), inline: true },
+      { name: "Wins", value: String(data.wins), inline: true },
+
+      { name: "K/D", value: kd, inline: true },
+      { name: "Winrate", value: winrate + "%", inline: true },
+      { name: "Rate", value: String(rate), inline: true },
+
+      { name: "Account age", value: `${days} days`, inline: true }
+    )
+    .setFooter({ text: "by sociopath39" });
+
+  msg.edit({ content: "✅ done", embeds: [embed] });
 }
 
-// ================= TOP MVP =================
-function getTopMVP() {
-  const results = [];
-
-  for (const name in dailyStats) {
-    const p = dailyStats[name];
-
-    const score = (p.kills || 0) + (p.wins || 0) * 5;
-
-    results.push({
-      name,
-      kills: p.kills || 0,
-      wins: p.wins || 0,
-      matches: p.matches || 0,
-      score
-    });
-  }
-
-  return results.sort((a, b) => b.score - a.score).slice(0, 3);
-}
-
-// ================= READY =================
-client.once("ready", async () => {
+// ================= BOT =================
+client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}`);
-
-  updateStats();
-  setInterval(updateStats, 5 * 60 * 1000);
-
-  const channel = await client.channels.fetch(CHANNEL_ID).catch(() => null);
-  if (channel) console.log("MVP system active");
 });
 
 // ================= COMMANDS =================
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
-  if (message.content === "!hello") {
-    return message.reply("PUBG bot is online 🔥");
-  }
-
-  if (message.content === "!clan") {
-    return message.reply(players.join("\n"));
-  }
-
-  if (message.content === "!mvp") {
-    const top = getTopMVP();
-    if (!top.length) return message.reply("⏳ no data yet");
-
-    const medals = ["🥇","🥈","🥉"];
-
-    const embed = new EmbedBuilder()
-      .setTitle("🏆 TOP 3 MVP (TODAY)")
-      .setColor(0xffd700);
-
-    let desc = "";
-
-    top.forEach((p, i) => {
-      desc += `${medals[i]} **${p.name}**\n`;
-      desc += `🔫 ${p.kills} | 🍗 ${p.wins} | 📊 ${p.score}\n\n`;
-    });
-
-    embed.setDescription(desc);
-
-    return message.reply({ embeds: [embed] });
-  }
-
-  // ================= !stats =================
   if (message.content.startsWith("!stats")) {
     const name = message.content.split(" ")[1];
-    if (!name) return message.reply("❌ Use: !stats nickname");
+    if (!name) return message.reply("Use: !stats nickname");
 
-    const msg = await message.reply("⏳ loading...");
-
-    const data = await getStats(name);
-    if (!data) return msg.edit("❌ Player not found");
-
-    const embed = new EmbedBuilder()
-      .setTitle("🏆 PLAYER STATS")
-      .setDescription(`${name} (${data.platform})`)
-      .addFields(
-        { name: "Kills", value: String(data.kills), inline: true },
-        { name: "Wins", value: String(data.wins), inline: true },
-        { name: "Matches", value: String(data.matches), inline: true },
-
-        { name: "K/D", value: data.kd.toFixed(2), inline: true },
-        { name: "Win Rate", value: `${data.winRate.toFixed(1)}%`, inline: true },
-        { name: "ADR", value: data.adr.toFixed(0), inline: true },
-
-        { name: "Account Age", value: `${data.accountDays} days`, inline: true }
-      )
-      .setFooter({ text: "by sociopath39" });
-
-    msg.edit({ content: "✅ done", embeds: [embed] });
+    return handleStats(message, name);
   }
 });
 
-// ================= LOGIN =================
 client.login(process.env.DISCORD_TOKEN);
