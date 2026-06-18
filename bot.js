@@ -43,7 +43,7 @@ const maps = [
 ];
 
 // Вкажи ID каналу з офіційними подіями PUBG для перекладу
-const PUBG_EVENTS_CHANNEL_ID = "ТВОЙ_ID_КАНАЛУ"; // заміни на ID своєго каналу
+const PUBG_EVENTS_CHANNEL_ID = "1516535807756861560"; // заміни на ID своєго каналу
 
 function shuffle(array) {
   for (let i = array.length - 1; i > 0; i--) {
