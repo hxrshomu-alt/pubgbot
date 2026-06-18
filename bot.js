@@ -12,13 +12,9 @@ const client = new Client({
 // ================= CONFIG =================
 const API_KEY = process.env.PUBG_API_KEY;
 
-const players = [
-  "_I_3u6a_I","o__XyHTA__o","oLex_body88","amatera150","Andriij95",
-  "Apostol9477","Ar_mg11","agressorU","astral-carving97","B1ggie_Doggie"
-];
-
 // ================= CACHE =================
 const cache = new Map();
+const seasonCache = new Map();
 const CACHE_TIME = 5 * 60 * 1000;
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -44,6 +40,22 @@ async function apiGet(url, retry = 1) {
   }
 }
 
+// ================= CURRENT SEASON =================
+async function getCurrentSeason(platform) {
+  if (seasonCache.has(platform)) {
+    return seasonCache.get(platform);
+  }
+
+  const res = await apiGet(
+    `https://api.pubg.com/shards/${platform}/seasons`
+  );
+
+  const season = res.data.data.find(s => s.attributes.isCurrentSeason);
+
+  seasonCache.set(platform, season.id);
+  return season.id;
+}
+
 // ================= GET PLAYER =================
 async function getStats(name) {
   const cached = cache.get(name);
@@ -63,6 +75,7 @@ async function getStats(name) {
 
       const createdAt = player.attributes?.createdAt;
 
+      // ================= LIFETIME =================
       const statsRes = await apiGet(
         `https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/lifetime`
       );
@@ -78,7 +91,54 @@ async function getStats(name) {
         matches += modes[m].roundsPlayed || 0;
       }
 
-      const result = { kills, wins, matches, createdAt, platform };
+      const kd = kills / (matches || 1);
+
+      const rate = Math.round(
+        (kills * 1.2 + wins * 15 + kd * 10) / (matches || 1)
+      );
+
+      // ================= RANKED =================
+      let tier = "Unranked";
+      let subTier = "";
+      let rankPoints = 0;
+
+      try {
+        const seasonId = await getCurrentSeason(platform);
+
+        const rankedRes = await apiGet(
+          `https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/${seasonId}/ranked`
+        );
+
+        const rankedData =
+          rankedRes.data?.data?.attributes?.rankedGameModeStats;
+
+        if (rankedData) {
+          const mode =
+            rankedData["squad-fpp"] ||
+            rankedData["solo-fpp"] ||
+            rankedData["duo-fpp"];
+
+          if (mode) {
+            tier = mode.currentTier?.tier || "Unranked";
+            subTier = mode.currentTier?.subTier || "";
+            rankPoints = mode.currentRankPoint || 0;
+          }
+        }
+      } catch (e) {
+        // ranked optional
+      }
+
+      const result = {
+        kills,
+        wins,
+        matches,
+        createdAt,
+        platform,
+        rate,
+        tier,
+        subTier,
+        rankPoints
+      };
 
       if (!best || result.kills > best.kills) best = result;
 
@@ -99,48 +159,12 @@ async function handleStats(message, name) {
   const kd = (data.kills / (data.matches || 1)).toFixed(2);
   const winrate = ((data.wins / (data.matches || 1)) * 100).toFixed(1);
 
-  // 📊 RATE (твоя формула)
-  const rate = Math.round(
-    (data.kills * 1.2 + data.wins * 15 + kd * 10) / (data.matches || 1)
-  );
-
-  // 🪖 RANK SYSTEM
- let rank = "Bronze";
-let color = 0xcd7f32;
-
-// PUBG-style ranking based on RATE
-if (rate >= 350) {
-  rank = "Survivor";
-  color = 0xff3b3b;
-} else if (rate >= 300) {
-  rank = "Master";
-  color = 0x8a2be2;
-} else if (rate >= 250) {
-  rank = "Diamond";
-  color = 0x00bfff;
-} else if (rate >= 200) {
-  rank = "Crystal";
-  color = 0x00ffff;
-} else if (rate >= 150) {
-  rank = "Platinum";
-  color = 0x66ccff;
-} else if (rate >= 100) {
-  rank = "Gold";
-  color = 0xffd700;
-} else if (rate >= 50) {
-  rank = "Silver";
-  color = 0xc0c0c0;
-} else {
-  rank = "Bronze";
-  color = 0xcd7f32;
-}
-
   const embed = new EmbedBuilder()
     .setTitle("🎮 PUBG PLAYER PROFILE")
     .setDescription(
-      `**${name}** | Platform: **${data.platform.toUpperCase()}**\n🏅 Rank: **${rank}**`
+      `**${name}** | Platform: **${data.platform.toUpperCase()}**`
     )
-    .setColor(color)
+    .setColor(0x00bfff)
     .addFields(
       {
         name: "📊 Core Stats",
@@ -155,7 +179,14 @@ if (rate >= 350) {
         value:
 `⚔️ K/D: **${kd}**
 📊 Winrate: **${winrate}%**
-🔥 Rate: **${rate}**`,
+🔥 Rate: **${data.rate}**`,
+        inline: false
+      },
+      {
+        name: "🏅 Ranked",
+        value:
+`🎖 Tier: **${data.tier} ${data.subTier}**
+📊 RP: **${data.rankPoints}**`,
         inline: false
       }
     )
