@@ -24,7 +24,7 @@ const CACHE_TIME = 5 * 60 * 1000;
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-// ================= REGISTRATION FOR CUSTOM MATCH =================
+// ================= GLOBALS =================
 let registeredPlayers = new Set();
 let registrationOpen = false;
 let customMatchFormat = null; // 1,2,3,4
@@ -42,8 +42,8 @@ const maps = [
   "Vikendi"
 ];
 
-// Вкажи ID каналу з офіційними подіями PUBG для перекладу
-const PUBG_EVENTS_CHANNEL_ID = "1516535807756861560"; // заміни на ID своєго каналу
+// Вкажи ID каналу офіційних подій PUBG для перекладу
+const PUBG_EVENTS_CHANNEL_ID = "1516535807756861560"; // Заміни на свій ID каналу
 
 function shuffle(array) {
   for (let i = array.length - 1; i > 0; i--) {
@@ -70,9 +70,154 @@ async function translateTextLibre(text, targetLang = "uk") {
   }
 }
 
-// ================= Існуючі функції та логіка (apiGet, getCurrentSeason, getStats, handleStats, hasAdminPermission) — залишаються без змін =================
+// ================= PUBG API =================
+async function apiGet(url, retry = 1) {
+  try {
+    await sleep(1200);
+    return await axios.get(url, {
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+        Accept: "application/vnd.api+json"
+      }
+    });
+  } catch (err) {
+    if (err.response?.status === 429 && retry > 0) {
+      await sleep(5000);
+      return apiGet(url, retry - 1);
+    }
+    throw err;
+  }
+}
 
-// ================= DISCORD =================
+async function getCurrentSeason(platform) {
+  if (seasonCache.has(platform)) return seasonCache.get(platform);
+  const res = await apiGet(`https://api.pubg.com/shards/${platform}/seasons`);
+  const season = res.data.data.find(s => s.attributes.isCurrentSeason);
+  seasonCache.set(platform, season.id);
+  return season.id;
+}
+
+async function getStats(name) {
+  const cached = cache.get(name);
+  if (cached && Date.now() - cached.time < CACHE_TIME) return cached.data;
+
+  const platforms = ["psn", "xbox"];
+  let best = null;
+
+  for (const platform of platforms) {
+    try {
+      const playerRes = await apiGet(
+        `https://api.pubg.com/shards/${platform}/players?filter[playerNames]=${encodeURIComponent(name)}`
+      );
+
+      const player = playerRes.data?.data?.[0];
+      if (!player) continue;
+
+      const statsRes = await apiGet(
+        `https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/lifetime`
+      );
+
+      const modes = statsRes.data?.data?.attributes?.gameModeStats;
+      if (!modes) continue;
+
+      let kills = 0, wins = 0, matches = 0;
+
+      for (const m in modes) {
+        kills += modes[m].kills || 0;
+        wins += modes[m].wins || 0;
+        matches += modes[m].roundsPlayed || 0;
+      }
+
+      const kd = kills / (matches || 1);
+      const rate = Math.round(
+        (kills * 1.2 + wins * 15 + kd * 10) / (matches || 1)
+      );
+
+      let tier = "Unranked";
+      let subTier = "";
+      let rankPoints = 0;
+
+      try {
+        const seasonId = await getCurrentSeason(platform);
+
+        const rankedRes = await apiGet(
+          `https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/${season}/ranked`
+        );
+
+        const rankedStats = rankedRes.data?.data?.attributes?.rankedGameModeStats;
+
+        if (rankedStats) {
+          const modes = Object.values(rankedStats);
+          const bestMode = modes.reduce((best, cur) => {
+            if (!cur?.currentTier) return best;
+            if (!best) return cur;
+            return (cur.currentRankPoint || 0) > (best.currentRankPoint || 0) ? cur : best;
+          }, null);
+
+          if (bestMode?.currentTier) {
+            tier = bestMode.currentTier.tier || "Unranked";
+            subTier = bestMode.currentTier.subTier || "";
+            rankPoints = bestMode.currentRankPoint || 0;
+          }
+        }
+      } catch (e) {}
+
+      const result = {
+        kills,
+        wins,
+        matches,
+        platform,
+        rate,
+        tier        subTier,
+        rankPoints
+      };
+
+      if (!best || result.kills > best.kills) best = result;
+
+    } catch (e) {}
+  }
+
+  if (best) cache.set(name, { data: best, time: Date.now() });
+  return best;
+}
+
+// ================= Права адміністратора =================
+function hasAdminPermission(member) {
+  if (!member) return false;
+  if (member.permissions.has("Administrator")) return true;
+  if (member.roles && member.roles.cache) {
+    const superAdminRole = member.roles.cache.find(role => role.name.toLowerCase().replace(/[-_]/g, " ") === "супер адмін");
+    if (superAdminRole) return true;
+  }
+  return false;
+}
+
+// ================= Обробник статистики =================
+async function handleStats(message, name) {
+  const msg = await message.reply("⏳ loading player data...");
+  const data = await getStats(name);
+  if (!data) return msg.edit("❌ Player not found");
+
+  const kd = (data.kills / (data.matches || 1)).toFixed(2);
+  const winrate = ((data.wins / (data.matches || 1)) * 100).toFixed(1);
+
+  const embed = new EmbedBuilder()
+    .setTitle("🎮 PUBG PLAYER PROFILE")
+    .setDescription(`**${name}** | Platform: **${data.platform.toUpperCase()}**`)
+    .setColor(0x00bfff)
+    .addFields(
+      { name: "📊 Core Stats", value: `🔫 Kills: **${data.kills}**\n🎯 Matches: **${data.matches}**\n🏆 Wins: **${data.wins}**`, inline: false },
+      { name: "📈 Performance", value: `⚔️ K/D: **${kd}**\n📊 Winrate: **${winrate}%**\n🔥 Rate: **${data.rate}**`, inline: false },
+      { name: "🏅 Ranked", value: `🎖 Tier: **${data.tier} ${data.subTier}**\n📊 RP: **${data.rankPoints}**`, inline: false }
+    )
+    .setThumbnail("https://cdn-icons-png.flaticon.com/512/1146/1146869.png")
+    .setFooter({ text: "by sociopath39" })
+    .setTimestamp();
+
+  msg.edit({ content: " ", embeds: [embed] });
+}
+
+// ================= Події бота =================
 client.once("ready", () => {
   console.log(`Discord logged in as ${client.user.tag}`);
 });
@@ -80,7 +225,7 @@ client.once("ready", () => {
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
-  // Автоматичний переклад повідомлень з офіційного каналу подій
+  // Переклад для каналу подій PUBG
   if (message.channel.id === PUBG_EVENTS_CHANNEL_ID) {
     const translated = await translateTextLibre(message.content);
     if (translated) {
@@ -91,7 +236,6 @@ client.on("messageCreate", async (message) => {
   const content = message.content.trim();
   const member = message.member;
 
-  // Обробка команд !stats та кастомні матчі (залишити як у твоєму оригіналі)
   if (content.startsWith("!stats")) {
     const name = content.split(" ")[1];
     if (!name) return message.reply("Use: !stats nickname");
@@ -99,7 +243,7 @@ client.on("messageCreate", async (message) => {
   }
 
   if (content.startsWith("!setformat")) {
-    if (!hasAdminPermission(member)) return message.reply("You don't have permission to do this.");
+    if (!hasAdminPermission(member)) return message.reply("You have permission to do this.");
     const format = parseInt(content.split(" ")[1], 10);
     if (![1, 2, 3, 4].includes(format)) return message.reply("Format must be 1 (solo), 2, 3 or 4");
     customMatchFormat = format;
@@ -138,7 +282,7 @@ client.on("messageCreate", async (message) => {
   }
 
   if (content === "!list") {
-    if (registeredPlayers.size === 0) return message.channel.send("No players registered yet.");
+    if (registeredPlayers.size === 0) return message.send("No players registered yet.");
     const membersArr = await Promise.all(
       Array.from(registeredPlayers).map(id => message.guild.members.fetch(id).catch(() => null))
     );
@@ -204,13 +348,13 @@ client.on("messageCreate", async (message) => {
     const formatText = customMatchFormat
       ? (customMatchFormat === 1 ? "Solo (each for themselves)" : `${customMatchFormat} players per team`)
       : "Not set";
-    const dateStr = "Date and time of the match: To be set"; // Тут можна прописати дату/час як змінну
+    const dateStr = "Date and time of the match: To be set"; // Тут можна додати актуальний час
     return message.channel.send(`Custom match info:\nStatus: ${status}\nFormat: ${formatText}\n${dateStr}`);
   }
 
   if (content === "!matchhistory") {
     if (matchHistory.length === 0) {
-      return message.channel.send("Match history is empty.");
+      return message.channel.send("Match is empty.");
     }
     let text = "Last matches:\n\n";
     matchHistory.slice(-5).reverse().forEach((m, i) => {
