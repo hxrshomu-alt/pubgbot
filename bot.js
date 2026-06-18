@@ -91,7 +91,7 @@ async function getStats(name) {
 
 // ================= !stats =================
 async function handleStats(message, name) {
-  const msg = await message.reply("⏳ loading...");
+  const msg = await message.reply("⏳ loading player data...");
 
   const data = await getStats(name);
   if (!data) return msg.edit("❌ Player not found");
@@ -99,33 +99,55 @@ async function handleStats(message, name) {
   const kd = (data.kills / (data.matches || 1)).toFixed(2);
   const winrate = ((data.wins / (data.matches || 1)) * 100).toFixed(1);
 
-  // 📅 days account
-  const days = data.createdAt
-    ? Math.floor((Date.now() - new Date(data.createdAt)) / (1000 * 60 * 60 * 24))
-    : "N/A";
+  const modes = data.rawModes || {};
+  let headshots = 0;
 
-  // 📊 RATE
-  const rate = Math.round(
-    (data.kills * 1.2 + data.wins * 15 + kd * 10) / (data.matches || 1)
+  for (const m in modes) {
+    headshots += modes[m].headshotKills || 0;
+  }
+
+  const hsRate = data.kills
+    ? ((headshots / data.kills) * 100).toFixed(1)
+    : "0.0";
+
+  const damage = Math.round(
+    data.kills * 100 + data.wins * 200
   );
 
   const embed = new EmbedBuilder()
-    .setTitle("🏆 PLAYER STATS")
-    .setDescription(`${name} (${data.platform})`)
+    .setTitle("🎮 PUBG PLAYER PROFILE")
+    .setDescription(`**${name}**  |  Platform: **${data.platform.toUpperCase()}**`)
+    .setColor(0x00bfff)
     .addFields(
-      { name: "Kills", value: String(data.kills), inline: true },
-      { name: "Matches", value: String(data.matches), inline: true },
-      { name: "Wins", value: String(data.wins), inline: true },
-
-      { name: "K/D", value: kd, inline: true },
-      { name: "Winrate", value: winrate + "%", inline: true },
-      { name: "Rate", value: String(rate), inline: true },
-
-      { name: "Account age", value: `${days} days`, inline: true }
+      {
+        name: "📊 Core Stats",
+        value:
+`🔫 Kills: **${data.kills}**
+🎯 Matches: **${data.matches}**
+🏆 Wins: **${data.wins}**`,
+        inline: false
+      },
+      {
+        name: "📈 Performance",
+        value:
+`⚔️ K/D: **${kd}**
+📊 Winrate: **${winrate}%**
+🔥 Damage Score: **${damage}**`,
+        inline: false
+      },
+      {
+        name: "🎯 Accuracy",
+        value:
+`💥 Headshot Rate: **${hsRate}%**
+☠️ Headshots: **${headshots}**`,
+        inline: false
+      }
     )
-    .setFooter({ text: "by sociopath39" });
+    .setThumbnail("https://cdn-icons-png.flaticon.com/512/1146/1146869.png")
+    .setFooter({ text: "by sociopath39" })
+    .setTimestamp();
 
-  msg.edit({ content: "✅ done", embeds: [embed] });
+  msg.edit({ content: " ", embeds: [embed] });
 }
 
 // ================= BOT =================
