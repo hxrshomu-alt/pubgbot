@@ -170,7 +170,7 @@ function hasAdminPermission(member) {
   if (member.permissions.has("Administrator")) return true;
 
   if (member.roles && member.roles.cache) {
-    const superAdminRole = member.roles.cache.find(role => role.name === "Супер-адмін");
+    const superAdminRole = member.roles.cache.find(role => role.name === "Супер адмін");
     if (superAdminRole) return true;
   }
 
