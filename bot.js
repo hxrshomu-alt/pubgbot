@@ -1,6 +1,8 @@
 const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
+const TelegramBot = require("node-telegram-bot-api");
 const axios = require("axios");
 
+// ================= DISCORD =================
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -8,6 +10,9 @@ const client = new Client({
     GatewayIntentBits.MessageContent
   ]
 });
+
+// ================= TELEGRAM =================
+const tg = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
 // ================= CONFIG =================
 const API_KEY = process.env.PUBG_API_KEY;
@@ -71,7 +76,6 @@ async function getStats(name) {
 
       const createdAt = player.attributes?.createdAt;
 
-      // ================= LIFETIME =================
       const statsRes = await apiGet(
         `https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/lifetime`
       );
@@ -93,7 +97,6 @@ async function getStats(name) {
         (kills * 1.2 + wins * 15 + kd * 10) / (matches || 1)
       );
 
-      // ================= RANKED =================
       let tier = "Unranked";
       let subTier = "";
       let rankPoints = 0;
@@ -126,9 +129,7 @@ async function getStats(name) {
             rankPoints = bestMode.currentRankPoint || 0;
           }
         }
-      } catch (e) {
-        console.log("Ranked error:", e.message);
-      }
+      } catch (e) {}
 
       const result = {
         kills,
@@ -144,16 +145,14 @@ async function getStats(name) {
 
       if (!best || result.kills > best.kills) best = result;
 
-    } catch (e) {
-      console.log(`API error ${platform}:`, e.message);
-    }
+    } catch (e) {}
   }
 
   if (best) cache.set(name, { data: best, time: Date.now() });
   return best;
 }
 
-// ================= HANDLE STATS =================
+// ================= DISCORD =================
 async function handleStats(message, name) {
   const msg = await message.reply("⏳ loading player data...");
 
@@ -201,9 +200,9 @@ async function handleStats(message, name) {
   msg.edit({ content: " ", embeds: [embed] });
 }
 
-// ================= BOT =================
+// ================= DISCORD EVENTS =================
 client.once("ready", () => {
-  console.log(`Logged in as ${client.user.tag}`);
+  console.log(`Discord logged in as ${client.user.tag}`);
 });
 
 client.on("messageCreate", async (message) => {
@@ -218,3 +217,34 @@ client.on("messageCreate", async (message) => {
 });
 
 client.login(process.env.DISCORD_TOKEN);
+
+// ================= TELEGRAM COMMAND =================
+tg.onText(/\/stats (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const name = match[1];
+
+  const data = await getStats(name);
+  if (!data) return tg.sendMessage(chatId, "❌ Player not found");
+
+  const kd = (data.kills / (data.matches || 1)).toFixed(2);
+  const winrate = ((data.wins / (data.matches || 1)) * 100).toFixed(1);
+
+  const text =
+`🎮 PUBG PLAYER PROFILE
+
+👤 ${name}
+🖥 Platform: ${data.platform.toUpperCase()}
+
+📊 Kills: ${data.kills}
+🎯 Matches: ${data.matches}
+🏆 Wins: ${data.wins}
+
+⚔️ K/D: ${kd}
+📊 Winrate: ${winrate}%
+🔥 Rate: ${data.rate}
+
+🏅 Rank: ${data.tier} ${data.subTier}
+📊 RP: ${data.rankPoints}`;
+
+  tg.sendMessage(chatId, text);
+});
