@@ -163,6 +163,20 @@ async function getStats(name) {
   return best;
 }
 
+// ================= Check Admin Permission =================
+function hasAdminPermission(member) {
+  if (!member) return false;
+
+  // Перевірка системного права Administrator
+  if (member.permissions.has("Administrator")) return true;
+
+  // Перевірка ролі "Супер-адмін"
+  const superAdminRole = member.roles.cache.find(role => role.name === "Супер-адмін");
+  if (superAdminRole) return true;
+
+  return false;
+}
+
 // ================= DISCORD =================
 async function handleStats(message, name) {
   const msg = await message.reply("⏳ loading player data...");
@@ -229,7 +243,7 @@ client.on("messageCreate", async (message) => {
 
   // Відкрити реєстрацію на кастомний матч (адміністратори)
   if (content === "!openreg") {
-    if (!message.member.permissions.has("Administrator")) {
+    if (!hasAdminPermission(message.member)) {
       return message.reply("You don't have permission to do this.");
     }
     if (registrationOpen) {
@@ -242,7 +256,7 @@ client.on("messageCreate", async (message) => {
 
   // Закрити реєстрацію
   if (content === "!closereg") {
-    if (!message.member.permissions.has("Administrator")) {
+    if (!hasAdminPermission(message.member)) {
       return message.reply("You don't have permission to do this.");
     }
     if (!registrationOpen) {
@@ -281,7 +295,7 @@ client.on("messageCreate", async (message) => {
 
   // Почати матч і сформувати команди
   if (content === "!startmatch") {
-    if (!message.member.permissions.has("Administrator")) {
+    if (!hasAdminPermission(message.member)) {
       return message.reply("You don't have permission to do this.");
     }
     if (registrationOpen) {
