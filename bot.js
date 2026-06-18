@@ -31,15 +31,8 @@ let customMatchFormat = null; // 1,2,3,4
 const matchHistory = [];
 
 const maps = [
-  "Taego",
-  "Erangel",
-  "Miramar",
-  "Paramo",
-  "Sanhok",
-  "Karakin",
-  "Deston",
-  "Rondo",
-  "Vikendi"
+  "Taego", "Erangel", "Miramar", "Paramo", "Sanhok",
+  "Karakin", "Deston", "Rondo", "Vikendi"
 ];
 
 // Вкажи ID каналу офіційних подій PUBG для перекладу
@@ -244,7 +237,7 @@ client.on("messageCreate", async (message) => {
   }
 
   if (content.startsWith("!setformat")) {
-    if (!hasAdminPermission(member)) return message.reply("You have permission to do this.");
+    if (!hasAdminPermission(member)) return message.reply("You don't have permission to do this.");
     const format = parseInt(content.split(" ")[1], 10);
     if (![1, 2, 3, 4].includes(format)) return message.reply("Format must be 1 (solo), 2, 3 or 4");
     customMatchFormat = format;
@@ -283,7 +276,7 @@ client.on("messageCreate", async (message) => {
   }
 
   if (content === "!list") {
-    if (registeredPlayers.size === 0) return message.send("No players registered yet.");
+    if (registeredPlayers.size === 0) return message.channel.send("No players registered yet.");
     const membersArr = await Promise.all(
       Array.from(registeredPlayers).map(id => message.guild.members.fetch(id).catch(() => null))
     );
@@ -349,13 +342,13 @@ client.on("messageCreate", async (message) => {
     const formatText = customMatchFormat
       ? (customMatchFormat === 1 ? "Solo (each for themselves)" : `${customMatchFormat} players per team`)
       : "Not set";
-    const dateStr = "Date and time of the match: To be set"; // Тут можна додати актуальний час
+    const dateStr = "Date and time of the match: To be set";
     return message.channel.send(`Custom match info:\nStatus: ${status}\nFormat: ${formatText}\n${dateStr}`);
   }
 
   if (content === "!matchhistory") {
     if (matchHistory.length === 0) {
-      return message.channel.send("Match is empty.");
+      return message.channel.send("Match history is empty.");
     }
     let text = "Last matches:\n\n";
     matchHistory.slice(-5).reverse().forEach((m, i) => {
