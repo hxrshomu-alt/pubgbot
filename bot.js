@@ -24,6 +24,17 @@ const CACHE_TIME = 5 * 60 * 1000;
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+// ================= REGISTRATION FOR CUSTOM MATCH =================
+let registeredPlayers = new Set();
+let registrationOpen = false;
+
+function shuffle(array) {
+  for (let i = array.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
+  }
+}
+
 // ================= API =================
 async function apiGet(url, retry = 1) {
   try {
@@ -55,9 +66,7 @@ async function getCurrentSeason(platform) {
 
   seasonCache.set(platform, season.id);
   return season.id;
-}
-
-// ================= GET STATS =================
+ ================= GET STATS =================
 async function getStats(name) {
   const cached = cache.get(name);
   if (cached && Date.now() - cached.time < CACHE_TIME) return cached.data;
@@ -68,7 +77,7 @@ async function getStats(name) {
   for (const platform of platforms) {
     try {
       const playerRes = await apiGet(
-        `https://api.pubg.com/shards/${platform}/players?filter[playerNames]=${encodeURIComponent(name)}`
+        `https://api.pubg.com/shards/${platform}/players?filterNames]=${encodeURIComponent(name)}`
       );
 
       const player = playerRes.data?.data?.[0];
@@ -148,7 +157,7 @@ async function getStats(name) {
     } catch (e) {}
   }
 
-  if (best) cache.set(name, { data: best, time: Date.now() });
+  if (best) cache.set(name, { data: best,: Date.now() });
   return best;
 }
 
@@ -159,7 +168,7 @@ async function handleStats(message, name) {
   const data = await getStats(name);
   if (!data) return msg.edit("❌ Player not found");
 
-  const kd = (data.kills / (data.matches || 1)).toFixed(2);
+  const kd = (data.kills / (data.matches || )).toFixed(2);
   const winrate = ((data.wins / (data.matches || 1)) * 100).toFixed(1);
 
   const embed = new EmbedBuilder()
@@ -200,7 +209,6 @@ async function handleStats(message, name) {
   msg.edit({ content: " ", embeds: [embed] });
 }
 
-// ================= DISCORD EVENTS =================
 client.once("ready", () => {
   console.log(`Discord logged in as ${client.user.tag}`);
 });
@@ -208,11 +216,116 @@ client.once("ready", () => {
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
-  if (message.content.startsWith("!stats")) {
-    const name = message.content.split(" ")[1];
+  const content = message.content.trim();
+
+  if (content.startsWith("!stats")) {
+    const name = content.split(" ")[1];
     if (!name) return message.reply("Use: !stats nickname");
 
     return handleStats(message, name);
+  }
+
+  // Відкрити реєстрацію на кастомний матч (адміністратори)
+  if (content === "!openreg") {
+    if (!message.member.permissions.has("Administrator")) {
+      return message.reply("You don't have permission to do this.");
+    }
+    if (registrationOpen) {
+      return message.reply("Registration is already open.");
+    }
+    registrationOpen = true;
+    registeredPlayers.clear();
+    return message.channel.send("Registration for custom match is now OPEN! Use !register to join.");
+  }
+
+  // Закрити реєстрацію
+  if (content === "!closereg") {
+    if (!message.member.permissions.has("Administrator")) {
+      return message.reply("You don't have permission to do this.");
+    }
+    if (!registrationOpen) {
+      return message.reply("Registration is not open.");
+    }
+    registrationOpen = false;
+    if (registeredPlayers.size === 0) {
+      return message.channel.send("No players registered.");
+    }
+    return message.channel.send(`Registration closed. Registered players: ${registeredPlayers.size}`);
+  }
+
+  // Зареєструватися в матчі
+  if (content === "!register") {
+    if (!registrationOpen) {
+      return message.reply("Registration is currently closed.");
+    }
+    if (registeredPlayers.has(message.author.id)) {
+      return message.reply("You are already registered.");
+    }
+    registeredPlayers.add(message.author.id);
+    return message.reply("You have been registered for the custom match!");
+  }
+
+  // Показати список зареєстрованих
+  if (content === "!list") {
+    if (registeredPlayers.size === 0) {
+      return message.channel.send("No players registered yet.");
+    }
+    const members = await Promise.all(
+      Array.from(registeredPlayers).map(id => message.guild.members.fetch(id).catch(() => null))
+    );
+    const names = members.filter(m => m).map(m => m.user.username);
+    return message.channel.send(`Registered players:\n${names.join("\n")}`);
+  }
+
+  // Почати матч і сформувати команди
+  if (content === "!startmatch") {
+    if (!message.member.permissions.has("Administrator")) {
+      return message.reply("You don't have permission to do this.");
+    }
+    if (registrationOpen) {
+      return message.reply("Please close registration before starting the match.");
+    }
+    const count = registeredPlayers.size;
+    if (count < 2) {
+      return message.channel.send("Not enough players to start a match.");
+    }
+
+    const playersArray = Array.from(registeredPlayers);
+    shuffle(playersArray);
+
+    // Варіанти поділу на команди розміром 2-4 гравці
+    const teamConfigs = [];
+    for (let teamSize = 2; teamSize <= 4; teamSize++) {
+      if (count % teamSize === 0) {
+        const teamsCount = count / teamSize;
+        if (teamsCount >= 2) { // мінімум 2 команди
+          teamConfigs.push({ teamSize, teamsCount });
+        }
+      }
+    }
+
+    if (teamConfigs.length === 0) {
+      return message.channel.send("Не можливо рівно поділити гравців на команди розміром 2-4.");
+    }
+
+    // Вибираємо перший можливий варіант
+    const config = teamConfigs[0];
+    const { teamSize, teamsCount } = config;
+
+    let response = `Match started! Forming ${teamsCount} teams with ${teamSize} players each.\n\n`;
+
+    for (let i = 0; i < teamsCount; i++) {
+      const teamMembers = playersArray.slice(i * teamSize, (i + 1) * teamSize);
+      const memberNames = await Promise.all(
+        teamMembers.map(id => message.guild.members.fetch(id).then(m => m.user.username).catch(() => "Unknown"))
+      );
+      response += `**Team ${i + 1}**:\n${memberNames.join(", ")}\n\n`;
+    }
+
+    // Очистити реєстрацію після старту матчу
+    registeredPlayers.clear();
+
+    return message.channel.send(response);
   }
 });
 
