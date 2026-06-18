@@ -167,12 +167,12 @@ async function getStats(name) {
 function hasAdminPermission(member) {
   if (!member) return false;
 
-  // Перевірка системного права Administrator
   if (member.permissions.has("Administrator")) return true;
 
-  // Перевірка ролі "Супер-адмін"
-  const superAdminRole = member.roles.cache.find(role => role.name === "Супер-адмін");
-  if (superAdminRole) return true;
+  if (member.roles && member.roles.cache) {
+    const superAdminRole = member.roles.cache.find(role => role.name === "Супер-адмін");
+    if (superAdminRole) return true;
+  }
 
   return false;
 }
@@ -233,6 +233,7 @@ client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
   const content = message.content.trim();
+  const member = message.member;
 
   if (content.startsWith("!stats")) {
     const name = content.split(" ")[1];
@@ -241,9 +242,8 @@ client.on("messageCreate", async (message) => {
     return handleStats(message, name);
   }
 
-  // Відкрити реєстрацію на кастомний матч (адміністратори)
   if (content === "!openreg") {
-    if (!hasAdminPermission(message.member)) {
+    if (!hasAdminPermission(member)) {
       return message.reply("You don't have permission to do this.");
     }
     if (registrationOpen) {
@@ -254,9 +254,8 @@ client.on("messageCreate", async (message) => {
     return message.channel.send("Registration for custom match is now OPEN! Use !register to join.");
   }
 
-  // Закрити реєстрацію
   if (content === "!closereg") {
-    if (!hasAdminPermission(message.member)) {
+    if (!hasAdminPermission(member)) {
       return message.reply("You don't have permission to do this.");
     }
     if (!registrationOpen) {
@@ -269,7 +268,6 @@ client.on("messageCreate", async (message) => {
     return message.channel.send(`Registration closed. Registered players: ${registeredPlayers.size}`);
   }
 
-  // Зареєструватися в матчі
   if (content === "!register") {
     if (!registrationOpen) {
       return message.reply("Registration is currently closed.");
@@ -281,21 +279,19 @@ client.on("messageCreate", async (message) => {
     return message.reply("You have been registered for the custom match!");
   }
 
-  // Показати список зареєстрованих
   if (content === "!list") {
     if (registeredPlayers.size === 0) {
       return message.channel.send("No players registered yet.");
     }
-    const members = await Promise.all(
+    const membersArr = await Promise.all(
       Array.from(registeredPlayers).map(id => message.guild.members.fetch(id).catch(() => null))
     );
-    const names = members.filter(m => m).map(m => m.user.username);
+    const names = membersArr.filter(m => m).map(m => m.user.username);
     return message.channel.send(`Registered players:\n${names.join("\n")}`);
   }
 
-  // Почати матч і сформувати команди
   if (content === "!startmatch") {
-    if (!hasAdminPermission(message.member)) {
+    if (!hasAdminPermission(member)) {
       return message.reply("You don't have permission to do this.");
     }
     if (registrationOpen) {
@@ -309,12 +305,11 @@ client.on("messageCreate", async (message) => {
     const playersArray = Array.from(registeredPlayers);
     shuffle(playersArray);
 
-    // Варіанти поділу на команди розміром 2-4 гравці
     const teamConfigs = [];
     for (let teamSize = 2; teamSize <= 4; teamSize++) {
       if (count % teamSize === 0) {
         const teamsCount = count / teamSize;
-        if (teamsCount >= 2) { // мінімум 2 команди
+        if (teamsCount >= 2) {
           teamConfigs.push({ teamSize, teamsCount });
         }
       }
@@ -324,7 +319,6 @@ client.on("messageCreate", async (message) => {
       return message.channel.send("Не можливо рівно поділити гравців на команди розміром 2-4.");
     }
 
-    // Вибираємо перший можливий варіант
     const config = teamConfigs[0];
     const { teamSize, teamsCount } = config;
 
@@ -338,7 +332,6 @@ client.on("messageCreate", async (message) => {
       response += `**Team ${i + 1}**:\n${memberNames.join(", ")}\n\n`;
     }
 
-    // Очистити реєстрацію після старту матчу
     registeredPlayers.clear();
 
     return message.channel.send(response);
