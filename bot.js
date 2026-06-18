@@ -27,6 +27,20 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 // ================= REGISTRATION FOR CUSTOM MATCH =================
 let registeredPlayers = new Set();
 let registrationOpen = false;
+let customMatchFormat = null; // 1,2,3,4
+const matchHistory = [];
+
+const maps = [
+  "Taego",
+  "Erangel",
+  "Miramar",
+  "Paramo",
+  "Sanhok",
+  "Karakin",
+  "Deston",
+  "Rondo",
+  "Vikendi"
+];
 
 function shuffle(array) {
   for (let i = array.length - 1; i > 0; i--) {
@@ -39,14 +53,12 @@ function shuffle(array) {
 async function apiGet(url, retry = 1) {
   try {
     await sleep(1200);
-
     return await axios.get(url, {
       headers: {
         Authorization: `Bearer ${API_KEY}`,
         Accept: "application/vnd.api+json"
       }
     });
-
   } catch (err) {
     if (err.response?.status === 429 && retry > 0) {
       await sleep(5000);
@@ -59,11 +71,8 @@ async function apiGet(url, retry = 1) {
 // ================= CURRENT SEASON =================
 async function getCurrentSeason(platform) {
   if (seasonCache.has(platform)) return seasonCache.get(platform);
-
   const res = await apiGet(`https://api.pubg.com/shards/${platform}/seasons`);
-
   const season = res.data.data.find(s => s.attributes.isCurrentSeason);
-
   seasonCache.set(platform, season.id);
   return season.id;
 }
@@ -84,8 +93,6 @@ async function getStats(name) {
 
       const player = playerRes.data?.data?.[0];
       if (!player) continue;
-
-      const createdAt = player.attributes?.createdAt;
 
       const statsRes = await apiGet(
         `https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/lifetime`
@@ -114,24 +121,18 @@ async function getStats(name) {
 
       try {
         const seasonId = await getCurrentSeason(platform);
-
         const rankedRes = await apiGet(
           `https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/${seasonId}/ranked`
         );
 
-        const rankedStats =
-          rankedRes.data?.data?.attributes?.rankedGameModeStats;
-
+        const rankedStats = rankedRes.data?.data?.attributes?.rankedGameModeStats;
         if (rankedStats) {
           const modes = Object.values(rankedStats);
-
           const bestMode = modes.reduce((best, cur) => {
             if (!cur?.currentTier) return best;
             if (!best) return cur;
-
             return (cur.currentRankPoint || 0) > (best.currentRankPoint || 0)
-              ? cur
-              : best;
+              ? cur : best;
           }, null);
 
           if (bestMode?.currentTier) {
@@ -146,7 +147,6 @@ async function getStats(name) {
         kills,
         wins,
         matches,
-        createdAt,
         platform,
         rate,
         tier,
@@ -166,57 +166,30 @@ async function getStats(name) {
 // ================= Check Admin Permission =================
 function hasAdminPermission(member) {
   if (!member) return false;
-
   if (member.permissions.has("Administrator")) return true;
-
   if (member.roles && member.roles.cache) {
-    const superAdminRole = member.roles.cache.find(role => role.name === "Супер адмін");
+    const superAdminRole = member.roles.cache.find(role => role.name.toLowerCase().replace(/[-_]/g," ") === "супер адмін");
     if (superAdminRole) return true;
   }
-
   return false;
 }
 
 // ================= DISCORD =================
 async function handleStats(message, name) {
   const msg = await message.reply("⏳ loading player data...");
-
   const data = await getStats(name);
   if (!data) return msg.edit("❌ Player not found");
-
   const kd = (data.kills / (data.matches || 1)).toFixed(2);
   const winrate = ((data.wins / (data.matches || 1)) * 100).toFixed(1);
 
   const embed = new EmbedBuilder()
     .setTitle("🎮 PUBG PLAYER PROFILE")
-    .setDescription(
-      `**${name}** | Platform: **${data.platform.toUpperCase()}**`
-    )
+    .setDescription(`**${name}** | Platform: **${data.platform.toUpperCase()}**`)
     .setColor(0x00bfff)
     .addFields(
-      {
-        name: "📊 Core Stats",
-        value:
-`🔫 Kills: **${data.kills}**
-🎯 Matches: **${data.matches}**
-🏆 Wins: **${data.wins}**`,
-        inline: false
-      },
-      {
-        name: "📈 Performance",
-        value:
-`⚔️ K/D: **${kd}**
-📊 Winrate: **${winrate}%**
-🔥 Rate: **${data.rate}**`,
-        inline: false
-      },
-      {
-        name: "🏅 Ranked",
-        value:
-`🎖 Tier: **${data.tier} ${data.subTier}**
-📊 RP: **${data.rankPoints}**`,
-        inline: false
-      }
+      { name: "📊 Core Stats", value: `🔫 Kills: **${data.kills}**\n🎯 Matches: **${data.matches}**\n🏆 Wins: **${data.wins}**`, inline: false },
+      { name: "📈 Performance", value: `⚔️ K/D: **${kd}**\n📊 Winrate: **${winrate}%**\n🔥 Rate: **${data.rate}**`, inline: false },
+      { name: "🏅 Ranked", value: `🎖 Tier: **${data.tier} ${data.subTier}**\n📊 RP: **${data.rankPoints}**`, inline: false }
     )
     .setThumbnail("https://cdn-icons-png.flaticon.com/512/1146/1146869.png")
     .setFooter({ text: "by sociopath39" })
@@ -231,58 +204,63 @@ client.once("ready", () => {
 
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
-
   const content = message.content.trim();
   const member = message.member;
 
+  // Команди PUBG stats
   if (content.startsWith("!stats")) {
     const name = content.split(" ")[1];
     if (!name) return message.reply("Use: !stats nickname");
-
     return handleStats(message, name);
   }
 
-  if (content === "!openreg") {
-    if (!hasAdminPermission(member)) {
-      return message.reply("You don't have permission to do this.");
-    }
-    if (registrationOpen) {
-      return message.reply("Registration is already open.");
-    }
-    registrationOpen = true;
-    registeredPlayers.clear();
-    return message.channel.send("Registration for custom match is now OPEN! Use !register to join.");
+  // Встановлення формату матчу (1,2,3,4)
+  if (content.startsWith("!setformat")) {
+    if (!hasAdminPermission(member)) return message.reply("You don't have permission to do this.");
+    const format = parseInt(content.split(" ")[1], 10);
+    if (![1, 2, 3, 4].includes(format)) return message.reply("Format must be 1 (solo), 2, 3 or 4");
+    customMatchFormat = format;
+    return message.channel.send(`Custom match format set to ${format === 1 ? "solo (each for themselves)" : `${format} players per team`}.`);
   }
 
+  // Відкрити реєстрацію
+  if (content === "!openreg") {
+    if (!hasAdminPermission(member)) return message.reply("You don't have permission to do this.");
+    if (!customMatchFormat) return message.reply("Set match format first with !setformat");
+    if (registrationOpen) return message.reply("Registration is already open.");
+    registrationOpen = true;
+    registeredPlayers.clear();
+    return message.channel.send(`Registration opened! Format: ${customMatchFormat === 1 ? "solo (each for themselves)" : `${customMatchFormat} players per team`}.`);
+  }
+
+  // Закрити реєстрацію
   if (content === "!closereg") {
-    if (!hasAdminPermission(member)) {
-      return message.reply("You don't have permission to do this.");
-    }
-    if (!registrationOpen) {
-      return message.reply("Registration is not open.");
-    }
+    if (!hasAdminPermission(member)) return message.reply("You don't have permission to do this.");
+    if (!registrationOpen) return message.reply("Registration is not open.");
     registrationOpen = false;
-    if (registeredPlayers.size === 0) {
-      return message.channel.send("No players registered.");
-    }
+    if (registeredPlayers.size === 0) return message.channel.send("No players registered.");
     return message.channel.send(`Registration closed. Registered players: ${registeredPlayers.size}`);
   }
 
+  // Реєстрація користувача
   if (content === "!register") {
-    if (!registrationOpen) {
-      return message.reply("Registration is currently closed.");
-    }
-    if (registeredPlayers.has(message.author.id)) {
-      return message.reply("You are already registered.");
-    }
+    if (!registrationOpen) return message.reply("Registration is currently closed.");
+    if (registeredPlayers.has(message.author.id)) return message.reply("You are already registered.");
     registeredPlayers.add(message.author.id);
     return message.reply("You have been registered for the custom match!");
   }
 
+  // Скасувати реєстрацію
+  if (content === "!unregister") {
+    if (!registrationOpen) return message.reply("Registration is currently closed.");
+    if (!registeredPlayers.has(message.author.id)) return message.reply("You are not registered.");
+    registeredPlayers.delete(message.author.id);
+    return message.reply("You have been unregistered from the custom match.");
+  }
+
+  // Показати список зареєстрованих
   if (content === "!list") {
-    if (registeredPlayers.size === 0) {
-      return message.channel.send("No players registered yet.");
-    }
+    if (registeredPlayers.size === 0) return message.channel.send("No players registered yet.");
     const membersArr = await Promise.all(
       Array.from(registeredPlayers).map(id => message.guild.members.fetch(id).catch(() => null))
     );
@@ -290,51 +268,80 @@ client.on("messageCreate", async (message) => {
     return message.channel.send(`Registered players:\n${names.join("\n")}`);
   }
 
+  // Почати матч і сформувати команди або сольний режим
   if (content === "!startmatch") {
-    if (!hasAdminPermission(member)) {
-      return message.reply("You don't have permission to do this.");
-    }
-    if (registrationOpen) {
-      return message.reply("Please close registration before starting the match.");
-    }
+    if (!hasAdminPermission(member)) return message.reply("You don't have permission to do this.");
+    if (registrationOpen) return message.reply("Please close registration before starting the match.");
+    if (!customMatchFormat) return message.reply("Set match format first.");
     const count = registeredPlayers.size;
-    if (count < 2) {
-      return message.channel.send("Not enough players to start a match.");
-    }
+    if (count < (customMatchFormat === 1 ? 1 : customMatchFormat * 2))
+      return message.reply("Not enough players.");
+
+    if (customMatchFormat !== 1 && count % customMatchFormat !== 0)
+      return message.reply(`Player count must be multiple of ${customMatchFormat}.`);
 
     const playersArray = Array.from(registeredPlayers);
     shuffle(playersArray);
 
-    const teamConfigs = [];
-    for (let teamSize = 2; teamSize <= 4; teamSize++) {
-      if (count % teamSize === 0) {
-        const teamsCount = count / teamSize;
-        if (teamsCount >= 2) {
-          teamConfigs.push({ teamSize, teamsCount });
-        }
-      }
-    }
+    const selectedMap = maps[Math.floor(Math.random() * maps.length)];
+    let response = `Map selected for the match: **${selectedMap}**\n\n`;
 
-    if (teamConfigs.length === 0) {
-      return message.channel.send("Не можливо рівно поділити гравців на команди розміром 2-4.");
-    }
-
-    const config = teamConfigs[0];
-    const { teamSize, teamsCount } = config;
-
-    let response = `Match started! Forming ${teamsCount} teams with ${teamSize} players each.\n\n`;
-
-    for (let i = 0; i < teamsCount; i++) {
-      const teamMembers = playersArray.slice(i * teamSize, (i + 1) * teamSize);
+    if (customMatchFormat === 1) {
       const memberNames = await Promise.all(
-        teamMembers.map(id => message.guild.members.fetch(id).then(m => m.user.username).catch(() => "Unknown"))
+        playersArray.map(id => message.guild.members.fetch(id).then(m => m.user.username).catch(() => "Unknown"))
       );
-      response += `**Team ${i + 1}**:\n${memberNames.join(", ")}\n\n`;
+      response += "Solo mode match started! Players:\n" + memberNames.join("\n");
+      registeredPlayers.clear();
+      matchHistory.push({
+        date: new Date().toISOString(),
+        format: "Solo",
+        map: selectedMap,
+        players: memberNames
+      });
+      return message.channel.send(response);
+    } else {
+      const teamsCount = count / customMatchFormat;
+      response += `Match started! Forming ${teamsCount} teams with ${customMatchFormat} players each.\n\n`;
+      let teamsForHistory = [];
+      for (let i = 0; i < teamsCount; i++) {
+        const team = playersArray.slice(i * customMatchFormat, (i + 1) * customMatchFormat);
+        const memberNames = await Promise.all(
+          team.map(id => message.guild.members.fetch(id).then(m => m.user.username).catch(() => "Unknown"))
+        );
+        response += `**Team ${i + 1}**: ${memberNames.join(", ")}\n\n`;
+        teamsForHistory.push(memberNames);
+      }
+      registeredPlayers.clear();
+      matchHistory.push({
+        date: new Date().toISOString(),
+        format: `${customMatchFormat}x${customMatchFormat}`,
+        map: selectedMap,
+        teams: teamsForHistory
+      });
+      return message.channel.send(response);
     }
+  }
 
-    registeredPlayers.clear();
+  // Інформація про кастомний матч
+  if (content === "!custom") {
+    const status = registrationOpen ? "open" : "closed";
+    const formatText = customMatchFormat
+      ? (customMatchFormat === 1 ? "Solo (each for themselves)" : `${customMatchFormat} players per team`)
+      : "Not set";
+    const dateStr = "Date and time of the match: To be set"; // Можна додати конкретний час
+    return message.channel.send(`Custom match info:\nStatus: ${status}\nFormat: ${formatText}\n${dateStr}`);
+  }
 
-    return message.channel.send(response);
+  // Історія матчів
+  if (content === "!matchhistory") {
+    if (matchHistory.length === 0) {
+      return message.channel.send("Match history is empty.");
+    }
+    let text = "Last matches:\n\n";
+    matchHistory.slice(-5).reverse().forEach((m, i) => {
+      text += `${i + 1}. ${m.date} | Format: ${m.format} | Map: ${m.map}\n`;
+    });
+    return message.channel.send(text);
   }
 });
 
