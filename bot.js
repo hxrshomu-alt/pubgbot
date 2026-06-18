@@ -105,25 +105,30 @@ async function getStats(name) {
           `https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/${seasonId}/ranked`
         );
 
-        const rankedData =
+        const rankedStats =
           rankedRes.data?.data?.attributes?.rankedGameModeStats;
 
-        if (rankedData) {
-          const mode =
-            rankedData["squad-tpp"] ||
-            rankedData["duo-tpp"] ||
-            rankedData["solo-tpp"] ||
-            rankedData["squad-fpp"] ||
-            rankedData["duo-fpp"] ||
-            rankedData["solo-fpp"];
+        if (rankedStats) {
+          const modes = Object.values(rankedStats);
 
-          if (mode) {
-            tier = mode.currentTier?.tier || "Unranked";
-            subTier = mode.currentTier?.subTier || "";
-            rankPoints = mode.currentRankPoint || 0;
+          const bestMode = modes.reduce((best, cur) => {
+            if (!cur?.currentTier) return best;
+            if (!best) return cur;
+
+            return (cur.currentRankPoint || 0) > (best.currentRankPoint || 0)
+              ? cur
+              : best;
+          }, null);
+
+          if (bestMode?.currentTier) {
+            tier = bestMode.currentTier.tier || "Unranked";
+            subTier = bestMode.currentTier.subTier || "";
+            rankPoints = bestMode.currentRankPoint || 0;
           }
         }
-      } catch (e) {}
+      } catch (e) {
+        console.log("Ranked error:", e.message);
+      }
 
       const result = {
         kills,
@@ -139,14 +144,16 @@ async function getStats(name) {
 
       if (!best || result.kills > best.kills) best = result;
 
-    } catch (e) {}
+    } catch (e) {
+      console.log(`API error ${platform}:`, e.message);
+    }
   }
 
   if (best) cache.set(name, { data: best, time: Date.now() });
   return best;
 }
 
-// ================= STATS COMMAND =================
+// ================= HANDLE STATS =================
 async function handleStats(message, name) {
   const msg = await message.reply("⏳ loading player data...");
 
@@ -199,7 +206,6 @@ client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
-// ================= COMMANDS =================
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
