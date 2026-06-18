@@ -42,13 +42,9 @@ async function apiGet(url, retry = 1) {
 
 // ================= CURRENT SEASON =================
 async function getCurrentSeason(platform) {
-  if (seasonCache.has(platform)) {
-    return seasonCache.get(platform);
-  }
+  if (seasonCache.has(platform)) return seasonCache.get(platform);
 
-  const res = await apiGet(
-    `https://api.pubg.com/shards/${platform}/seasons`
-  );
+  const res = await apiGet(`https://api.pubg.com/shards/${platform}/seasons`);
 
   const season = res.data.data.find(s => s.attributes.isCurrentSeason);
 
@@ -56,7 +52,7 @@ async function getCurrentSeason(platform) {
   return season.id;
 }
 
-// ================= GET PLAYER =================
+// ================= GET STATS =================
 async function getStats(name) {
   const cached = cache.get(name);
   if (cached && Date.now() - cached.time < CACHE_TIME) return cached.data;
@@ -99,40 +95,58 @@ async function getStats(name) {
 
       // ================= RANKED =================
       let tier = "Unranked";
-let subTier = "";
-let rankPoints = 0;
+      let subTier = "";
+      let rankPoints = 0;
 
-try {
-  const seasonId = await getCurrentSeason(platform);
+      try {
+        const seasonId = await getCurrentSeason(platform);
 
-  const rankedRes = await apiGet(
-    `https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/${seasonId}/ranked`
-  );
+        const rankedRes = await apiGet(
+          `https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/${seasonId}/ranked`
+        );
 
-  const rankedData =
-    rankedRes.data?.data?.attributes?.rankedGameModeStats;
+        const rankedData =
+          rankedRes.data?.data?.attributes?.rankedGameModeStats;
 
-  if (rankedData) {
-    // 🎮 пріоритет TPP (бо ти сказав що консолі)
-    const mode =
-      rankedData["squad-tpp"] ||
-      rankedData["duo-tpp"] ||
-      rankedData["solo-tpp"] ||
-      rankedData["squad-fpp"] ||
-      rankedData["duo-fpp"] ||
-      rankedData["solo-fpp"];
+        if (rankedData) {
+          const mode =
+            rankedData["squad-tpp"] ||
+            rankedData["duo-tpp"] ||
+            rankedData["solo-tpp"] ||
+            rankedData["squad-fpp"] ||
+            rankedData["duo-fpp"] ||
+            rankedData["solo-fpp"];
 
-    if (mode) {
-      tier = mode.currentTier?.tier || "Unranked";
-      subTier = mode.currentTier?.subTier || "";
-      rankPoints = mode.currentRankPoint || 0;
-    }
+          if (mode) {
+            tier = mode.currentTier?.tier || "Unranked";
+            subTier = mode.currentTier?.subTier || "";
+            rankPoints = mode.currentRankPoint || 0;
+          }
+        }
+      } catch (e) {}
+
+      const result = {
+        kills,
+        wins,
+        matches,
+        createdAt,
+        platform,
+        rate,
+        tier,
+        subTier,
+        rankPoints
+      };
+
+      if (!best || result.kills > best.kills) best = result;
+
+    } catch (e) {}
   }
-} catch (e) {
-  // ranked optional
+
+  if (best) cache.set(name, { data: best, time: Date.now() });
+  return best;
 }
 
-// ================= !stats =================
+// ================= STATS COMMAND =================
 async function handleStats(message, name) {
   const msg = await message.reply("⏳ loading player data...");
 
