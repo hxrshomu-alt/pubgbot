@@ -99,25 +99,48 @@ async function handleStats(message, name) {
   const kd = (data.kills / (data.matches || 1)).toFixed(2);
   const winrate = ((data.wins / (data.matches || 1)) * 100).toFixed(1);
 
-  const modes = data.rawModes || {};
-  let headshots = 0;
-
-  for (const m in modes) {
-    headshots += modes[m].headshotKills || 0;
-  }
-
-  const hsRate = data.kills
-    ? ((headshots / data.kills) * 100).toFixed(1)
-    : "0.0";
-
-  const damage = Math.round(
-    data.kills * 100 + data.wins * 200
+  // 📊 RATE (твоя формула)
+  const rate = Math.round(
+    (data.kills * 1.2 + data.wins * 15 + kd * 10) / (data.matches || 1)
   );
+
+  // 🪖 RANK SYSTEM
+ let rank = "Bronze";
+let color = 0xcd7f32;
+
+// PUBG-style ranking based on RATE
+if (rate >= 350) {
+  rank = "Survivor";
+  color = 0xff3b3b;
+} else if (rate >= 300) {
+  rank = "Master";
+  color = 0x8a2be2;
+} else if (rate >= 250) {
+  rank = "Diamond";
+  color = 0x00bfff;
+} else if (rate >= 200) {
+  rank = "Crystal";
+  color = 0x00ffff;
+} else if (rate >= 150) {
+  rank = "Platinum";
+  color = 0x66ccff;
+} else if (rate >= 100) {
+  rank = "Gold";
+  color = 0xffd700;
+} else if (rate >= 50) {
+  rank = "Silver";
+  color = 0xc0c0c0;
+} else {
+  rank = "Bronze";
+  color = 0xcd7f32;
+}
 
   const embed = new EmbedBuilder()
     .setTitle("🎮 PUBG PLAYER PROFILE")
-    .setDescription(`**${name}**  |  Platform: **${data.platform.toUpperCase()}**`)
-    .setColor(0x00bfff)
+    .setDescription(
+      `**${name}** | Platform: **${data.platform.toUpperCase()}**\n🏅 Rank: **${rank}**`
+    )
+    .setColor(color)
     .addFields(
       {
         name: "📊 Core Stats",
@@ -132,14 +155,7 @@ async function handleStats(message, name) {
         value:
 `⚔️ K/D: **${kd}**
 📊 Winrate: **${winrate}%**
-🔥 Damage Score: **${damage}**`,
-        inline: false
-      },
-      {
-        name: "🎯 Accuracy",
-        value:
-`💥 Headshot Rate: **${hsRate}%**
-☠️ Headshots: **${headshots}**`,
+🔥 Rate: **${rate}**`,
         inline: false
       }
     )
