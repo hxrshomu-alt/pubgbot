@@ -66,7 +66,9 @@ async function getCurrentSeason(platform) {
 
   seasonCache.set(platform, season.id);
   return season.id;
- ================= GET STATS =================
+}
+
+// ================= GET STATS =================
 async function getStats(name) {
   const cached = cache.get(name);
   if (cached && Date.now() - cached.time < CACHE_TIME) return cached.data;
@@ -77,7 +79,7 @@ async function getStats(name) {
   for (const platform of platforms) {
     try {
       const playerRes = await apiGet(
-        `https://api.pubg.com/shards/${platform}/players?filterNames]=${encodeURIComponent(name)}`
+        `https://api.pubg.com/shards/${platform}/players?filter[playerNames]=${encodeURIComponent(name)}`
       );
 
       const player = playerRes.data?.data?.[0];
@@ -157,7 +159,7 @@ async function getStats(name) {
     } catch (e) {}
   }
 
-  if (best) cache.set(name, { data: best,: Date.now() });
+  if (best) cache.set(name, { data: best, time: Date.now() });
   return best;
 }
 
@@ -168,7 +170,7 @@ async function handleStats(message, name) {
   const data = await getStats(name);
   if (!data) return msg.edit("❌ Player not found");
 
-  const kd = (data.kills / (data.matches || )).toFixed(2);
+  const kd = (data.kills / (data.matches || 1)).toFixed(2);
   const winrate = ((data.wins / (data.matches || 1)) * 100).toFixed(1);
 
   const embed = new EmbedBuilder()
