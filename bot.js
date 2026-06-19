@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
+const { Client, GatewayIntentBits, EmbedBuilder, Events } = require("discord.js");
 const TelegramBot = require("node-telegram-bot-api");
 const axios = require("axios");
 const fs = require("fs").promises;
@@ -26,7 +26,7 @@ const tg = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 // ================= GLOBALS =================
 let registeredPlayers = new Set();
 let registrationOpen = false;
-let customMatchFormat = null; // 1,2,3,4
+let customMatchFormat = null;
 const matchHistory = [];
 const activePlayers = new Map();
 const previousMatchesCache = new Map();
@@ -61,61 +61,149 @@ async function loadPlayers() {
       activePlayers.set(id,info);
     }
     console.log(`Loaded ${activePlayers.size} active players`);
-  } catch {console.log("No existing players db found or error reading it");}
+  } catch { console.log("No existing players db found or error reading it"); }
 }
 async function savePlayers() {
   try {
     const obj = {};
-    for (const [id,info] of activePlayers.entries()) obj[id] = info;
+    for(const [id,info] of activePlayers.entries()) obj[id]=info;
     await fs.writeFile(path.join(__dirname,"players.json"), JSON.stringify(obj,null,2),"utf-8");
-  } catch(e){console.error("Error saving players db:", e);}
+  } catch(e) { console.error("Error saving players db:", e); }
 }
 
 // ================= PUBG API =================
-// apiGet, getCurrentSeason, getStats - як у тебе, без змін (щоб відповісти вміст не дублюю)
+async function apiGet(url, retry=1) {
+  try {
+    await sleep(1200);
+    return await axios.get(url, {
+      headers: { Authorization: `Bearer ${API_KEY}`, Accept:"application/vnd.api+json" }
+ });
+  } catch (err) {
+    if(err.response?.status === 429 && retry>0){
+      await sleep(5000);
+      return apiGet(url,retry-1);
+    }
+    throw err;
+  }
+}
 
-async function apiGet(url,retry=1){ /*...*/ }
-async function getCurrentSeason(platform){ /*...*/ }
-async function getStats(name){ /*...*/ }
+async function getCurrentSeason(platform){
+  if(seasonCache.has(platform)) return seasonCache.get(platform);
+  const res = await apiGet(`https://api.pubg.com/shards/${platform}/seasons`);
+  const season = res.data.data.find(s=>s.attributes.isCurrentSeason);
+  seasonCache.set(platform, season.id);
+  return season.id;
+}
 
-// ================= PERMISSION UTILS =================
+async function getStats(name){
+  const cached = cache.get(name);
+  if(cached && Date.now()- cached.time < CACHE_TIME) return cached.data;
+
+  const platforms = ["psn","xbox"];
+  let best = null;
+
+  for(const platform of platforms){
+    try {
+      const playerRes = await apiGet(`https://api.pubg.com/shards/${platform}/players?filter[playerNames]=${encodeURIComponent(name)}`);
+      const player = playerRes.data?.data?.[0];
+      if(!player) continue;
+
+      const statsRes = await apiGet(`https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/lifetime`);
+      const modes = statsRes.data?.data?.attributes?.gameModeStats;
+      if(!modes) continue;
+
+      let kills=0, wins=0, matches=0;
+      for(const m in modes){
+        kills += modes[m].kills||0;
+        wins += modes[m].wins||0;
+        matches += modes[m].roundsPlayed||0;
+      }
+
+      let tier = "Unranked", subTier = "", rankPoints=0;
+      const seasonId = await getCurrentSeason(platform);
+      try{
+        const rankedRes = await apiGet(`https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/${seasonId}/ranked`);
+        const rankedStats = rankedRes.data?.data?.attributes?.rankedGameModeStats;
+        if(rankedStats){
+          const modes = Object.values(rankedStats);
+          const bestMode = modes.reduce((best,cur)=>{
+            if(!cur?.currentTier) return best;
+            if(!best) return cur;
+            return (cur.currentRankPoint||0)>(best.currentRankPoint||0)?cur:best;
+          },null);
+          if(bestMode?.currentTier){
+            tier = bestMode.currentTier.tier || "Unranked";
+            subTier = bestMode.currentTier.subTier || "";
+            rankPoints = bestMode.currentRankPoint || 0;
+          }
+        }
+      }catch{}
+      const result = {kills, wins, matches, platform, tier, subTier, rankPoints};
+      if(!best || result.kills>best.kills) best = result;
+    }catch{}
+  }
+  if(best) cache.set(name, {data: best, time: Date.now()});
+  return best;
+}
+
+// ================= PERMISSIONS =================
 function hasAdminPermission(member){
   if(!member) return false;
   if(member.permissions.has("Administrator")) return true;
   if(member.roles && member.roles.cache){
-    return member.roles.cache.some(r => r.name.toLowerCase().replace(/[-_]/g," ") === "супер адмін");
+    return member.roles.cache.some(role => role.name.toLowerCase().replace(/[-_]/g," ") === "супер адмін");
   }
   return false;
 }
 
-// ================= MVP FUNCTIONS =================
-// updatePlayerDailyStats, updatePlayerWeeklyStats, getMVPTopN - як у тебе, додану лише якщо потрібна допомога — можу надіслати
+// ================= HANDLE COMMANDS =================
+async function handleStats(message,name){
+  const msg = await message.reply("⏳ loading player data...");
+  const data = await getStats(name);
+  if(!data) return msg.edit("❌ Player not found");
 
-// ================= DISCORD EVENTS =================
-client.once("clientready", async () => {
+  const kd = (data.kills/(data.matches||1)).toFixed(2);
+  const winrate = ((data.wins/(data.matches||1))*100).toFixed(1);
+
+  const embed = new EmbedBuilder()
+    .setTitle("🎮 PUBG PLAYER PROFILE")
+    .setDescription(`**${name}** | Platform: **${data.platform.toUpperCase()}**`)
+    .setColor(0x00bfff)
+    .addFields(
+      {name:"📊 Core Stats", value:`🔫 Kills: **${data.kills}**\n🎯 Matches: **${data.matches}**\n🏆 Wins: **${data.wins}**`, inline:false},
+      {name:"📈 Performance", value:`⚔️ K/D: **${kd}**\n📊 Winrate: **${winrate}%**\n🔥 Rate: **${data.rate}**`, inline:false},
+      {name:"🏅 Ranked", value:`🎖 Tier: **${data.tier} ${data.subTier}**\n📊 RP: **${data.rankPoints}**`, inline:false}
+    )
+    .setThumbnail("https://cdn-icons-png.flaticon.com/512/1146/1146869.png")
+    .setFooter({text:"by sociopath39"})
+    .setTimestamp();
+
+  msg.edit({content:" ", embeds:[embed]});
+}
+
+// ================= EVENTS =================
+client.once(Events.ClientReady, async () => {
   console.log(`Discord logged in as ${client.user.tag}`);
   await loadPlayers();
   scheduleDailyMVP();
-  setInterval(checkForChickenDinners, 5*60*1000);
+  setInterval(checkForChickenDinners, MATCH_CHECK_INTERVAL);
 });
 
 client.on("guildMemberAdd", async member => {
   try {
     const channel = await member.guild.channels.fetch(WELCOME_CHANNEL_ID);
     if(channel && channel.isTextBased()){
-      channel.send(`🎉 Ласкаво просимо на сервер, ${member}! Щоб додати себе в базу для статистики PUBG, напиши:\n\`!join <твій_нік> <платформа>\``);
+      channel.send(`🎉 Ласкаво просимо на сервер, ${member}! Щоб додати себе в базу для статистики PUBG, напиши:\n\`!join <нік> <платформа>\``);
     }
   } catch(e) {console.error(e);}
 });
 
-// ================= DISCORD MESSAGE HANDLER =================
 client.on("messageCreate", async message => {
   if(message.author.bot) return;
   const content = message.content.trim();
   const userId = message.author.id;
   const member = message.member;
 
-  // Переклад повідомлень PUBG подій
   if(message.channel.id === PUBG_EVENTS_CHANNEL_ID){
     const translated = await translateTextLibre(message.content);
     if(translated) await message.channel.send(`🇺🇦 Переклад:\n${translated}`);
@@ -123,103 +211,46 @@ client.on("messageCreate", async message => {
 
   if(content.startsWith("!join")){
     const args = content.split(" ");
-    if(args.length<3) return message.reply("Використання: !join <PUBG_нік> <psn|xbox|steam>");
+    if(args.length < 3) return message.reply("Використання: !join <нік> <psn|xbox|steam>");
     const pubgName = args[1];
     const platform = args[2].toLowerCase();
     if(!["psn","xbox","steam"].includes(platform)) return message.reply("Платформа має бути: psn, xbox або steam");
-    activePlayers.set(userId, {pubgName,platform});
+
+    activePlayers.set(userId, {pubgName, platform});
     await savePlayers();
-    return message.reply(`Ти зареєстрований як ${pubgName} на платформі ${platform}`);
+    return message.reply(`Ти зареєстрований як ${pubgName} на ${platform}`);
   }
 
-  if(content.startsWith("!register")){
-    if(!registrationOpen) return message.reply("Реєстрація на кастомний матч зараз закрита.");
-    if(registeredPlayers.has(userId)) return message.reply("Ти вже зареєстрований.");
-    registeredPlayers.add(userId);
-    return message.reply("Ти зареєстрований на кастомний матч!");
-  }
-
-  if(content.startsWith("!unregister")){
-    if(!registrationOpen) return message.reply("Реєстрація зараз закрита.");
-    if(!registeredPlayers.has(userId)) return message.reply("Ти не зареєстрований.");
-    registeredPlayers.delete(userId);
-    return message.reply("Ти скасовуєш реєстрацію з кастомного матчу.");
-  }
-
-  if(content.startsWith("!list")){
-    if(registeredPlayers.size === 0) return message.channel.send("Ніхто не зареєстрований.");
-    const members = await Promise.all(Array.from(registeredPlayers).map(id => message.guild.members.fetch(id).catch(()=>null)));
-    const names = members.filter(Boolean).map(m=>m.user.username);
-    return message.channel.send(`Зареєстровані гравці:\n${names.join("\n")}`);
-  }
-
-  if(content.startsWith("!startmatch")){
-    if(!hasAdminPermission(member)) return message.reply("Тільки адміністратори можуть запускати матчі.");
-    if(registrationOpen) return message.reply("Закрий реєстрацію перш ніж почати матч.");
-    if(!customMatchFormat) return message.reply("Спочатку встанови формат зі !setformat");
-    const count = registeredPlayers.size;
-    if(count < (customMatchFormat === 1 ? 1 : customMatchFormat * 2))
-      return message.reply("Занадто мало гравців для матчу.");
-    if(customMatchFormat !==1 && count%customMatchFormat !== 0)
-      return message.reply(`Кількість гравців повинна бути кратною ${customMatchFormat}.`);
-    const playersArray = Array.from(registeredPlayers);
-    shuffle(playersArray);
-    const selectedMap = maps[Math.floor(Math.random()*maps.length)];
-    let response = `Обрана карта: **${selectedMap}**\n\n`;
-
-    if(customMatchFormat === 1){
-      const memberNames = await Promise.all(playersArray.map(id => message.guild.members.fetch(id).then(m=>m.user.username).catch(()=> "Unknown")));
-      response += "Матч у форматі соло, учасники:\n" + memberNames.join("\n");
-      registeredPlayers.clear();
-      matchHistory.push({date:new Date().toISOString(),format:"solo",map:selectedMap,players:memberNames});
-      return message.channel.send(response);
-    } else {
-      const teamsCount = count/customMatchFormat;
-      response += `Матч розпочато! Формуємо ${teamsCount} команди по ${customMatchFormat} гравців.\n\n`;
-      let teamsForHistory = [];
-      for(let i=0; i<teamsCount; i++){
-        const team = playersArray.slice(i*customMatchFormat,(i+1)*customMatchFormat);
-        const memberNames = await Promise.all(team.map(id => message.guild.members.fetch(id).then(m=>m.user.username).catch(()=> "Unknown")));
-        response += `**Команда ${i+1}**: ${memberNames.join(", ")}\n\n`;
-        teamsForHistory.push(memberNames);
-      }
-      registeredPlayers.clear();
-      matchHistory.push({ date:new Date().toISOString(), format:`${customMatchFormat}x${customMatchFormat}`, map:selectedMap, teams:teamsForHistory});
-      return message.channel.send(response);
-    }
-  }
-
-  if(content.startsWith("!setformat")){
-    if(!hasAdminPermission(member)) return message.reply("Тільки адміністратори можуть це робити.");
-    const format = parseInt(content.split(" ")[1],10);
-    if(![1,2,3,4].includes(format)) return message.reply("Формат має бути 1, 2, 3 або 4");
-    customMatchFormat = format;
-    return message.channel.send(`Формат матчу встановлено: ${format===1 ? "соло" : format + " гравців у команді"}`);
-  }
-
-  if(content.startsWith("!addplayer")){
-    if(!hasAdminPermission(member)) return message.reply("Тільки адміністратори можуть це робити.");
+  if(content.startsWith("!mvp")){
     const args = content.split(" ");
-    if(args.length < 2) return message.reply("Вкажи Discord тег користувача для додавання");
-    const userTag = args[1].replace(/[<@!>]/g,"");
-    registeredPlayers.add(userTag);
-    return message.channel.send(`Додано користувача <@${userTag}> до реєстрації на кастомний матч.`);
+    const period = args[1]?.toLowerCase() || "daily";
+    if(!["daily","weekly"].includes(period)) return message.reply("Використай !mvp daily або !mvp weekly");
+
+    await Promise.all(
+      Array.from(activePlayers.keys()).map(userId =>
+        period === "daily" ? updatePlayerDailyStats(userId) : updatePlayerWeeklyStats(userId)
+      )
+    );
+
+    const top = getMVPTopN(period);
+    if(top.length === 0) return message.channel.send("Немає даних для відображення.");
+
+    let desc = top.map((p,i) =>
+      `${i+1}. **${p.pubgName}** (${p.platform.toUpperCase()}) - Виграшів: ${p.winsDiff}, Вбивств: ${p.killsDiff}`
+    ).join("\n");
+
+    const embed = new EmbedBuilder()
+      .setTitle(`🏆 Топ 5 PUBG MVP (${period})`)
+      .setDescription(desc)
+      .setColor(0xffd700)
+      .setTimestamp();
+
+    return message.channel.send({ embeds: [embed] });
   }
 
-  if(content.startsWith("!custom")){
-    const status = registrationOpen ? "відкрита" : "закрита";
-    const formatText = customMatchFormat ? (customMatchFormat===1 ? "Соло (кожен за себе)" : `${customMatchFormat} гравців у команді`) : "Не виставлено";
-    const dateStr = "Дата і час матчу: буде оголошено";
-    return message.channel.send(`Інформація про кастомний матч:\nСтатус: ${status}\nФормат: ${formatText}\n${dateStr}`);
-  }
-
-  if(content.startsWith("!matchhistory")){
-    if(matchHistory.length === 0) return message.channel.send("Історія матчів порожня");
-    let text = "Останні матчі:\n\n";
-    matchHistory.slice(-5).reverse().forEach((m,i) => {
-      text += `${i+1}. ${m.date} | Формат: ${m.format} | Карта: ${m.map}\n`;
-    });
-    return message.channel.send(text);
+  if(content.startsWith("!register")) {
+    // Зареєструватися через !join
+    return message.reply("Використовуйте команду !join <нік> <платформа> для реєстрації.");
   }
 
   if(content.startsWith("!stats")){
@@ -227,9 +258,11 @@ client.on("messageCreate", async message => {
     if(!name) return message.reply("Використання: !stats <нік>");
     return handleStats(message,name);
   }
+
+  // --- інші команди --- 
 });
 
-// ================= DAILY MVP POSTING =================
+// ================= DAILY MVP =================
 function scheduleDailyMVP() {
   const now = new Date();
   const target = new Date();
@@ -239,80 +272,80 @@ function scheduleDailyMVP() {
 
   setTimeout(() => {
     postDailyMVP();
-    setInterval(postDailyMVP,24*60*60*1000);
+    setInterval(postDailyMVP, 24*60*60*1000);
   }, msToWait);
 }
 
-async function postDailyMVP() {
-  await Promise.all(Array.from(activePlayers.keys()).map(userId => updatePlayerDailyStats(userId)));
-
+async function postDailyMVP(){
+  await Promise.all(
+    Array.from(activePlayers.keys()).map(userId => updatePlayerDailyStats(userId))
+  );
   const top = getMVPTopN("daily");
-  if(top.length === 0) return;
+  if(top.length===0) return;
 
   let desc = top.map((p,i) =>
-    `${i+1}. **${p.pubgName}** (${p.platform.toUpperCase()}) - Wins: ${p.winsDiff}, Kills: ${p.killsDiff}`
+    `${i+1}. **${p.pubgName}** (${p.platform.toUpperCase()}) - Виграшів: ${p.winsDiff}, Вбивств: ${p.killsDiff}`
   ).join("\n");
 
   const embed = new EmbedBuilder()
-    .setTitle("🏆 Daily PUBG MVP Top 5")
-    .setDescription(desc)
-    .setColor(0x00ff00)
-    .setTimestamp();
+        .setTitle("🏆 Щоденний топ 5 PUBG MVP")
+        .setDescription(desc)
+        .setColor(0x00ff00)
+        .setTimestamp();
 
   const channel = await client.channels.fetch(MVP_CHANNEL_ID).catch(()=>null);
   if(channel) channel.send({embeds:[embed]});
 }
 
-// ================= CHICKENDINNER CHECK =================
-async function checkForChickenDinners() {
-  if(activePlayers.size === 0) return;
+// ================= CHECK FOR CHICKEN DINNERS =================
+async function checkForChickenDinners(){
+  if(activePlayers.size===0) return;
 
   for(const [discordId, playerInfo] of activePlayers.entries()){
-    try {
+    try{
       const stats = await getPlayerStats(playerInfo.pubgName, playerInfo.platform);
       if(!stats || !stats.playerId) continue;
 
-      const lastId = previousMatchesCache.get(discordId) || null;
+      const lastKnownMatchId = previousMatchesCache.get(discordId) || null;
       const matches = await getPlayerRecentMatches(stats.playerId, playerInfo.platform);
 
       for(const match of matches){
-        if(match.id === lastId) break;
+        const matchId = match.id;
+        if(matchId === lastKnownMatchId) break;
 
-        const matchData = await apiGet(`https://api.pubg.com/shards/${playerInfo.platform}/matches/${match.id}`);
+        const matchData = await apiGet(`https://api.pubg.com/shards/${playerInfo.platform}/matches/${matchId}`);
         if(!matchData?.data) continue;
 
         const gameMode = matchData.data.attributes.gameMode.toLowerCase();
-        if(!((gameMode.includes("squad")||gameMode.includes("duo")) && gameMode.includes("tpp"))) continue;
+        if(!((gameMode.includes("squad") || gameMode.includes("duo")) && gameMode.includes("tpp"))) continue;
 
         const participants = matchData.data.relationships.participants.data.map(x => x.id);
         if(!participants.includes(stats.playerId)) continue;
 
-        previousMatchesCache.set(discordId, match.id);
+        previousMatchesCache.set(discordId, matchId);
 
         const channel = await client.channels.fetch(MVP_CHANNEL_ID).catch(() => null);
         if(channel) channel.send(`🏆 **${playerInfo.pubgName}** взяв Chicken Dinner у режимі ${matchData.data.attributes.gameMode}! 🎉`);
 
         break;
       }
-    } catch {
-      // Ігноруємо помилки
-    }
+    }catch{}
   }
 }
 
-// ================= Free Translation =================
-async function translateTextLibre(text, targetLang = "uk") {
-  try {
-    const res = await axios.post("https://libretranslate.de/translate", {
+// ================= TRANSLATE =================
+async function translateTextLibre(text, targetLang = "uk"){
+  try{
+    const res = await axios.post("https://libretranslate.de/translate",{
       q: text,
       source: "en",
       target: targetLang,
       format: "text"
     }, {
-      headers: {"Content-Type": "application/json"}
+      headers: {"Content-Type":"application/json"}
     });
     return res.data.translatedText;
-  } catch {
+  }catch{
     return null;
   }
 }
@@ -324,8 +357,8 @@ tg.onText(/\/stats (.+)/, async (msg, match) => {
   const data = await getStats(name);
   if(!data) return tg.sendMessage(chatId, "❌ Player not found");
 
-  const kd = (data.kills / (data.matches || 1)).toFixed(2);
-  const winrate = ((data.wins / (data.matches || 1))*100).toFixed(1);
+  const kd = (data.kills/(data.matches || 1)).toFixed(2);
+  const winrate = ((data.wins/(data.matches || 1))*100).toFixed(1);
 
   const text = `🎮 PUBG PLAYER PROFILE
 
