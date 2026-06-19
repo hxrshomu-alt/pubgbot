@@ -9,7 +9,8 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers // Додаємо інтенти для події приєднання
   ]
 });
 
@@ -18,25 +19,57 @@ const tg = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
 // ================= CONFIG =================
 const API_KEY = process.env.PUBG_API_KEY;
-const MVP_CHANNEL_ID = "1516535807756861560"; // Заміни на свій канал
+const MVP_CHANNEL_ID = "1516535807756861560"; // Канал, куди бот публікує MVP; заміни на свій
+const WELCOME_CHANNEL_ID = "1366013620294783098"; // Заміни на ID каналу для привітань
 
 // ================= CACHE =================
 const cache = new Map();
 const seasonCache = new Map();
 const CACHE_TIME = 5 * 60 * 1000;
-const MATCH_CHECK_INTERVAL = 5 * 60 * 1000;
+const MATCH_CHECK_INTERVAL = 5 * 60 * 1000; // 5 хвилин перевірка нових матчів
 
-// ================= FILE DB =================
 const PLAYERS_DB_FILE = path.join(__dirname, "players.json");
 
 // ================= GLOBALS =================
-let registeredPlayers = new Set();
+let registeredPlayers = new Set(); // тепер уже для реєстрації в матчі
 let registrationOpen = false;
-let customMatchFormat = null;
+let customMatchFormat = null; // 1,2,3,4
 const matchHistory = [];
-const activePlayers = new Map(); // DiscordID -> {pubgName, platform, статистика, дати}
+const activePlayers = new Map(); // DiscordID -> { pubgName, platform, lastDailyCheck, lastWeeklyCheck, та інші статистики }
 
-const previousMatchesCache = new Map();
+const previousMatchesCache = new Map(); // DiscordID -> lastMatchId
+
+const maps = [
+  "Taego", "Erangel", "Miramar", "Paramo", "Sanhok",
+  "Karakin", "Deston", "Rondo", "Vikendi"
+];
+
+// Зчитати базу гравців із файлу
+async function loadPlayers() {
+  try {
+    const data = await fs.readFile(PLAYERS_DB_FILE, "utf-8");
+    const obj = JSON.parse(data);
+    for (const [discordId, info] of Object.entries(obj)) {
+      activePlayers.set(discordId, info);
+    }
+    console.log(`Loaded ${activePlayers.size} active players`);
+  } catch (e) {
+    console.log("No existing players db found or error reading it");
+  }
+}
+
+// Зберегти базу гравців у файл
+async function savePlayers() {
+  try {
+    const obj = {};
+    for (const [discordId, info] of activePlayers.entries()) {
+      obj[discordId] = info;
+    }
+    await fs.writeFile(PLAYERS_DB_FILE, JSON.stringify(obj, null, 2), "utf-8");
+  } catch (e) {
+    console.error("Error saving players db:", e);
+  }
+}
 
 // ================= UTILS =================
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -48,41 +81,17 @@ function shuffle(array) {
   }
 }
 
+// Форматуємо дату у формат YYYY-MM-DD
 function formatDate(date) {
   return date.toISOString().slice(0, 10);
 }
 
+// Отримати ISO тиждень у форматі YYYY-WW
 function getWeekKey(date) {
   const onejan = new Date(date.getFullYear(), 0, 1);
   const dayOfYear = Math.floor((date - onejan) / (24*60*60*1000)) + 1;
   const weekNum = Math.ceil(dayOfYear / 7);
   return `${date.getFullYear()}-${weekNum.toString().padStart(2, '0')}`;
-}
-
-// ================= LOAD/SAVE PLAYERS DB =================
-async function loadPlayers() {
-  try {
-    const data = await fs.readFile(PLAYERS_DB_FILE, "utf-8");
-    const obj = JSON.parse(data);
-    for (const [discordId, info] of Object.entries(obj)) {
-      activePlayers.set(discordId, info);
-    }
-    console.log(`Loaded ${activePlayers.size} active players`);
-  } catch {
-    console.log("Players DB not found or read error");
-  }
-}
-
-async function savePlayers() {
-  try {
-    const obj = {};
-    for (const [discordId, info] of activePlayers.entries()) {
-      obj[discordId] = info;
-    }
-    await fs.writeFile(PLAYERS_DB_FILE, JSON.stringify(obj, null, 2), "utf-8");
-  } catch (e) {
-    console.error("Error saving players DB:", e);
-  }
 }
 
 // ================= PUBG API =================
@@ -112,6 +121,7 @@ async function getCurrentSeason(platform) {
   return season.id;
 }
 
+// Отримати профіль гравця (для MVP і статистики)
 async function getPlayerStats(pubgName, platform) {
   const cached = cache.get(pubgName + platform);
   if (cached && Date.now() - cached.time < CACHE_TIME) return cached.data;
@@ -120,16 +130,19 @@ async function getPlayerStats(pubgName, platform) {
     const playerRes = await apiGet(
       `https://api.pubg.com/shards/${platform}/players?filter[playerNames]=${encodeURIComponent(pubgName)}`
     );
+
     const player = playerRes.data?.data?.[0];
     if (!player) return null;
 
     const statsRes = await apiGet(
       `https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/lifetime`
     );
+
     const modes = statsRes.data?.data?.attributes?.gameModeStats;
     if (!modes) return null;
 
     let kills = 0, wins = 0, matches = 0;
+
     for (const m in modes) {
       kills += modes[m].kills || 0;
       wins += modes[m].wins || 0;
@@ -137,7 +150,9 @@ async function getPlayerStats(pubgName, platform) {
     }
 
     const kd = kills / (matches || 1);
-    const rate = Math.round((kills * 1.2 + wins * 15 + kd * 10) / (matches || 1));
+    const rate = Math.round(
+      (kills * 1.2 + wins * 15 + kd * 10) / (matches || 1)
+    );
 
     let tier = "Unranked";
     let subTier = "";
@@ -148,7 +163,9 @@ async function getPlayerStats(pubgName, platform) {
       const rankedRes = await apiGet(
         `https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/${seasonId}/ranked`
       );
+
       const rankedStats = rankedRes.data?.data?.attributes?.rankedGameModeStats;
+
       if (rankedStats) {
         const modes = Object.values(rankedStats);
         const bestMode = modes.reduce((best, cur) => {
@@ -163,7 +180,7 @@ async function getPlayerStats(pubgName, platform) {
           rankPoints = bestMode.currentRankPoint || 0;
         }
       }
-    } catch {}
+    } catch (e) {}
 
     const result = {
       playerId: player.id,
@@ -176,29 +193,29 @@ async function getPlayerStats(pubgName, platform) {
       subTier,
       rankPoints
     };
+
     cache.set(pubgName + platform, { data: result, time: Date.now() });
     return result;
-  } catch {
+  } catch (e) {
     return null;
   }
 }
 
+// Отримати останні матчі гравця (для перевірки чікендіннерів)
 async function getPlayerRecentMatches(playerId, platform) {
   try {
     const res = await apiGet(`https://api.pubg.com/shards/${platform}/players/${playerId}/matches?filter[gamepad]=false&sort=-createdAt&perPage=5`);
     return res.data.data || [];
-  } catch {
+  } catch (e) {
     return [];
   }
 }
 
-// ================= MVP FUNCTIONS =================
-
-// Оновлення денних статистик із підрахунком приросту
+// ================= MVP ranking =================
+// Оновлення денних статистик з підрахунком приросту
 async function updatePlayerDailyStats(discordId) {
   const p = activePlayers.get(discordId);
   if (!p) return null;
-
   const now = new Date();
   const today = formatDate(now);
   if (p.lastDailyCheck === today) return null;
@@ -220,7 +237,6 @@ async function updatePlayerDailyStats(discordId) {
   p.dailyWinsDiff = winsDiff > 0 ? winsDiff : 0;
 
   activePlayers.set(discordId, p);
-
   await savePlayers();
   return p;
 }
@@ -228,7 +244,6 @@ async function updatePlayerDailyStats(discordId) {
 async function updatePlayerWeeklyStats(discordId) {
   const p = activePlayers.get(discordId);
   if (!p) return null;
-
   const now = new Date();
   const wk = getWeekKey(now);
   if (p.lastWeeklyCheck === wk) return null;
@@ -265,7 +280,7 @@ function getMVPTopN(metric = "daily") {
   return playersWithData.slice(0, 5);
 }
 
-// ================= COMMAND HANDLERS =================
+// ================= DISCORD COMMANDS =================
 client.once("ready", async () => {
   console.log(`Discord logged in as ${client.user.tag}`);
   await loadPlayers();
@@ -274,9 +289,26 @@ client.once("ready", async () => {
   setInterval(checkForChickenDinners, MATCH_CHECK_INTERVAL);
 });
 
+client.on("guildMemberAdd", async (member) => {
+  try {
+    const channel = await member.guild.channels.fetch(WELCOME_CHANNEL_ID);
+    if (!channel || !channel.isTextBased()) return;
+
+    channel.send(
+      `🎉 Ласкаво просимо на сервер, ${member.user}!` +
+      `\nЩоб зареєструвати PUBG-нік, використай: \`!join <нік> <платформа>\`` +
+      `\nДля топ гравців: \`!mvp daily\` або \`!mvp weekly\`` +
+      `\nДетальніше команди можна дізнатись у бота!`
+    );
+  } catch (error) {
+    console.error("Помилка при вітанні нового учасника:", error);
+  }
+});
+
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
+  // Переклад для каналу подій PUBG
   if (message.channel.id === MVP_CHANNEL_ID) {
     const translated = await translateTextLibre(message.content);
     if (translated) {
@@ -292,9 +324,7 @@ client.on("messageCreate", async (message) => {
     if (args.length < 3) return message.reply("Usage: !join <pubg_nickname> <psn|xbox|steam>");
     const pubgName = args[1];
     const platform = args[2].toLowerCase();
-    if (!["psn", "xbox", "steam"].includes(platform)) {
-      return message.reply("Platform must be one of: psn, xbox, steam");
-    }
+    if (!["psn","xbox","steam"].includes(platform)) return message.reply("Platform must be one of: psn, xbox, steam");
 
     activePlayers.set(userId, { pubgName, platform });
     await savePlayers();
@@ -307,7 +337,7 @@ client.on("messageCreate", async (message) => {
     if (!["daily","weekly"].includes(period)) return message.reply("Use !mvp daily or !mvp weekly");
 
     await Promise.all(
-      Array.from(activePlayers.keys()).map(userId =>
+      Array.from(activePlayers.keys()).map(userId => 
         period === "daily" ? updatePlayerDailyStats(userId) : updatePlayerWeeklyStats(userId)
       )
     );
@@ -315,7 +345,7 @@ client.on("messageCreate", async (message) => {
     const top = getMVPTopN(period);
     if (top.length === 0) return message.channel.send("No data available yet.");
 
-    let desc = top.map((p, i) =>
+    let desc = top.map((p,i)=>
       `${i+1}. **${p.pubgName}** (${p.platform.toUpperCase()}) - Wins: ${p.winsDiff || p.weeklyWins || 0}, Kills: ${p.killsDiff || p.weeklyKills || 0}`
     ).join("\n");
 
@@ -329,10 +359,10 @@ client.on("messageCreate", async (message) => {
   }
 
   if (content.startsWith("!register")) {
-    return message.reply("Please use !join <pubg_nickname> <platform> to register yourself.");
+    return message.reply("Use !join <pubg_nickname> <platform> to register yourself.");
   }
 
-  // Твої інші команди залишаються тут
+  // Ваші інші команди тут...
 });
 
 // ================= DAILY MVP POSTING =================
@@ -357,7 +387,7 @@ async function postDailyMVP() {
   const top = getMVPTopN("daily");
   if (top.length === 0) return;
 
-  let desc = top.map((p, i) =>
+  let desc = top.map((p,i)=>
     `${i+1}. **${p.pubgName}** (${p.platform.toUpperCase()}) - Wins: ${p.winsDiff}, Kills: ${p.killsDiff}`
   ).join("\n");
 
@@ -368,12 +398,10 @@ async function postDailyMVP() {
     .setTimestamp();
 
   const channel = await client.channels.fetch(MVP_CHANNEL_ID).catch(() => null);
-  if (channel) {
-    channel.send({ embeds: [embed] });
-  }
+  if (channel) channel.send({ embeds: [embed] });
 }
 
-// ================= CHECK CHICKEN DINNERS =================
+// =============== СПРОБУЄМО ВІДСТЕЖУВАТИ ЧІКЕНДІННЕР ===============
 async function checkForChickenDinners() {
   if (activePlayers.size === 0) return;
 
@@ -418,7 +446,7 @@ async function checkForChickenDinners() {
   }
 }
 
-// ================= Free Translation =================
+// ================= Free Translation via LibreTranslate =================
 async function translateTextLibre(text, targetLang = "uk") {
   try {
     const res = await axios.post("https://libretranslate.de/translate", {
@@ -466,7 +494,7 @@ tg.onText(/\/stats (.+)/, async (msg, match) => {
   tg.sendMessage(chatId, text);
 });
 
-// ================= ORIG. STATS FUNCTION з твого коду =================
+// ================= ORIG. GETSTATS FUNCTION =================
 async function getStats(name) {
   const cached = cache.get(name);
   if (cached && Date.now() - cached.time < CACHE_TIME) return cached.data;
@@ -552,5 +580,5 @@ async function getStats(name) {
   return best;
 }
 
-// ================= LOGIN BOTS =================
+// ================= LOGIN =================
 client.login(process.env.DISCORD_TOKEN);
