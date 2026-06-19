@@ -9,6 +9,7 @@ const API_KEY = process.env.PUBG_API_KEY;
 const MVP_CHANNEL_ID = "1516535807756861560";
 const WELCOME_CHANNEL_ID = "1366013620294783098";
 const PUBG_EVENTS_CHANNEL_ID = MVP_CHANNEL_ID;
+const MATCH_CHECK_INTERVAL = 5 * 60 * 1000; // 5 хвилин перевірка нових матчів
 
 // ================= DISCORD =================
 const client = new Client({
