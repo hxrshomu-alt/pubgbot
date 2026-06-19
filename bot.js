@@ -92,7 +92,7 @@ function hasAdminPermission(member){
 // updatePlayerDailyStats, updatePlayerWeeklyStats, getMVPTopN - як у тебе, додану лише якщо потрібна допомога — можу надіслати
 
 // ================= DISCORD EVENTS =================
-client.once("ready", async () => {
+client.once("clientready", async () => {
   console.log(`Discord logged in as ${client.user.tag}`);
   await loadPlayers();
   scheduleDailyMVP();
