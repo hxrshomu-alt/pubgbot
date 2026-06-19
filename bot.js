@@ -1,4 +1,12 @@
 const { Client, GatewayIntentBits, EmbedBuilder, Events } = require("discord.js");
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers
+  ]
+});
 const TelegramBot = require("node-telegram-bot-api");
 const axios = require("axios");
 const fs = require("fs").promises;
