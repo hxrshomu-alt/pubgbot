@@ -28,6 +28,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 let registeredPlayers = new Set();
 let registrationOpen = false;
 let customMatchFormat = null; // 1,2,3,4
+let lastTeamSize = null;
 const matchHistory = [];
 
 const maps = [
@@ -342,6 +343,97 @@ client.on("messageCreate", async (message) => {
     .setTimestamp();
 
   return message.channel.send({
+    embeds: [embed]
+  });
+}
+  if (content.startsWith("!maketeams")) {
+
+  if (!hasAdminPermission(member))
+    return message.reply("You don't have permission.");
+
+  if (registrationOpen)
+    return message.reply("❌ Close registration first with !closereg.");
+
+  const args = content.split(" ");
+  const teamSize = parseInt(args[1]);
+
+  if (![1, 2, 3, 4, 6].includes(teamSize))
+    return message.reply("Usage: !maketeams 1|2|3|4|6");
+
+  const playerIds = Array.from(registeredPlayers);
+
+  if (playerIds.length < teamSize * 2)
+    return message.reply("❌ Not enough players.");
+
+  if (playerIds.length % teamSize !== 0)
+    return message.reply(
+      `❌ ${playerIds.length} players cannot be divided into teams of ${teamSize}.`
+    );
+
+  shuffle(playerIds);
+
+  lastTeamSize = teamSize;
+
+  let response = "🔥 RANDOM TEAMS\n\n";
+
+  const teamsCount = playerIds.length / teamSize;
+
+  for (let i = 0; i < teamsCount; i++) {
+
+    const team = playerIds.slice(
+      i * teamSize,
+      (i + 1) * teamSize
+    );
+
+    const names = await Promise.all(
+      team.map(id =>
+        message.guild.members.fetch(id)
+          .then(m => m.user.username)
+          .catch(() => "Unknown")
+      )
+    );
+
+    response += `🛡 Team ${i + 1}\n`;
+    response += names.join("\n");
+    response += "\n\n";
+  }
+
+  return message.channel.send(response);
+}
+  if (content === "!announce") {
+
+  if (!hasAdminPermission(member))
+    return message.reply("You don't have permission.");
+
+  const embed = new EmbedBuilder()
+    .setColor(0x005BBB)
+    .setTitle("🔥 SKIP UA CUSTOM MATCH")
+    .setDescription(
+`📅 Сьогодні
+⏰ 21:00
+
+🎮 PUBG Console
+
+🟢 Реєстрація відкрита
+
+👥 Формати:
+2x2 • 4x4 • Arcade 6x6
+
+📝 Участь:
+\`!register\`
+
+📋 Учасники:
+\`!list\`
+
+🇺🇦 SKIP UA`
+    )
+    .setFooter({
+      text: "Winner Winner Chicken Dinner 🍗"
+    })
+    .setTimestamp();
+
+  return message.channel.send({
+    content: "@everyone",
     embeds: [embed]
   });
 }
