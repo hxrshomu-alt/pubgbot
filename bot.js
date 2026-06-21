@@ -5,9 +5,9 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 
+// ================= DATABASE =================
 const DB_PATH = path.join(__dirname, "data.json");
 
-// --- load DB ---
 function loadDB() {
   if (!fs.existsSync(DB_PATH)) {
     fs.writeFileSync(DB_PATH, JSON.stringify({ players: {}, matches: [] }, null, 2));
@@ -15,9 +15,22 @@ function loadDB() {
   return JSON.parse(fs.readFileSync(DB_PATH, "utf8"));
 }
 
-// --- save DB ---
 function saveDB(data) {
   fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
+}
+
+// ================= SNAPSHOTS (MVP SYSTEM) =================
+const SNAPSHOT_PATH = path.join(__dirname, "data/snapshots.json");
+
+function loadSnapshots() {
+  if (!fs.existsSync(SNAPSHOT_PATH)) {
+    fs.writeFileSync(SNAPSHOT_PATH, "[]");
+  }
+  return JSON.parse(fs.readFileSync(SNAPSHOT_PATH, "utf8"));
+}
+
+function saveSnapshots(data) {
+  fs.writeFileSync(SNAPSHOT_PATH, JSON.stringify(data, null, 2));
 }
 
 // ================= DISCORD =================
