@@ -5,7 +5,7 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 
-// ================= DATABASE =================
+// ================ DATABASE ================
 const DB_PATH = path.join(__dirname, "data/players.json");
 
 function loadDB() {
