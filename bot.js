@@ -6,7 +6,7 @@ const fs = require("fs");
 const path = require("path");
 
 // ================= DATABASE =================
-const DB_PATH = path.join(__dirname, "data.json");
+const DB_PATH = path.join(__dirname, "data/players.json");
 
 function loadDB() {
   if (!fs.existsSync(DB_PATH)) {
