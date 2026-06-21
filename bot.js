@@ -23,10 +23,22 @@ function saveDB(data) {
 const SNAPSHOT_PATH = path.join(__dirname, "data/snapshots.json");
 
 function loadSnapshots() {
-  if (!fs.existsSync(SNAPSHOT_PATH)) {
+  try {
+    if (!fs.existsSync(SNAPSHOT_PATH)) {
+      fs.writeFileSync(SNAPSHOT_PATH, "[]");
+    }
+
+    const raw = fs.readFileSync(SNAPSHOT_PATH, "utf8");
+
+    if (!raw || !raw.trim()) return [];
+
+    return JSON.parse(raw);
+  } catch (e) {
+    console.log("Snapshots corrupted → resetting file");
+
     fs.writeFileSync(SNAPSHOT_PATH, "[]");
+    return [];
   }
-  return JSON.parse(fs.readFileSync(SNAPSHOT_PATH, "utf8"));
 }
 
 function saveSnapshots(data) {
