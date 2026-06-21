@@ -1,6 +1,23 @@
 const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
 const TelegramBot = require("node-telegram-bot-api");
 const axios = require("axios");
+const fs = require("fs");
+const path = require("path");
+
+const DB_PATH = path.join(__dirname, "data.json");
+
+// --- load DB ---
+function loadDB() {
+  if (!fs.existsSync(DB_PATH)) {
+    fs.writeFileSync(DB_PATH, JSON.stringify({ players: {}, matches: [] }, null, 2));
+  }
+  return JSON.parse(fs.readFileSync(DB_PATH, "utf8"));
+}
+
+// --- save DB ---
+function saveDB(data) {
+  fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
+}
 
 // ================= DISCORD =================
 const client = new Client({
@@ -236,6 +253,36 @@ client.on("messageCreate", async (message) => {
     if (!name) return message.reply("Use: !stats nickname");
     return handleStats(message, name);
   }
+  
+  if (content.startsWith("!skipua")) {
+  const db = loadDB();
+
+  const args = content.split(" ");
+  const gameName = args.slice(1).join(" ");
+
+  if (!gameName) {
+    return message.reply("❌ Напиши свій ігровий нік.\nПриклад: !skipua MyNick");
+  }
+
+  const userId = message.author.id;
+
+  if (!db.players[userId]) {
+    db.players[userId] = {
+      discordId: userId,
+      discordName: message.author.username,
+      gameName: gameName,
+      registeredAt: new Date().toISOString()
+    };
+
+    saveDB(db);
+    return message.reply(`✅ Ти зареєстрований!\n🎮 Нік: **${gameName}**`);
+  }
+
+  db.players[userId].gameName = gameName;
+  saveDB(db);
+
+  return message.reply(`🔄 Оновлено нік: **${gameName}**`);
+}
 
   if (content.startsWith("!setformat")) {
     if (!hasAdminPermission(member)) return message.reply("You don't have permission to do this.");
