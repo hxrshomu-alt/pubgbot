@@ -302,14 +302,49 @@ client.on("messageCreate", async (message) => {
   // --- Кінець нових команд ---
 
   if (content === "!list") {
-    if (registeredPlayers.size === 0) return message.channel.send("No players registered yet.");
-    const membersArr = await Promise.all(
-      Array.from(registeredPlayers).map(id => message.guild.members.fetch(id).catch(() => null))
-    );
-    const names = membersArr.filter(m => m).map(m => m.user.username);
-    return message.channel.send(`Registered players:\n${names.join("\n")}`);
-  }
 
+  if (registeredPlayers.size === 0)
+    return message.channel.send("❌ No players registered yet.");
+
+  const membersArr = await Promise.all(
+    Array.from(registeredPlayers).map(id =>
+      message.guild.members.fetch(id).catch(() => null)
+    )
+  );
+
+  const names = membersArr
+    .filter(m => m)
+    .map((m, index) => `${index + 1}. ${m.user.username}`);
+
+  const embed = new EmbedBuilder()
+    .setColor(0x00bfff)
+    .setTitle("🎮 REGISTERED PLAYERS")
+    .setDescription(names.join("\n"))
+    .addFields(
+      {
+        name: "👥 Total Players",
+        value: `${registeredPlayers.size}`,
+        inline: true
+      },
+      {
+        name: "🎯 Format",
+        value: customMatchFormat
+          ? (customMatchFormat === 1
+              ? "Solo"
+              : `${customMatchFormat} players/team`)
+          : "Not set",
+        inline: true
+      }
+    )
+    .setFooter({
+      text: "SKIP UA CUSTOM MATCH"
+    })
+    .setTimestamp();
+
+  return message.channel.send({
+    embeds: [embed]
+  });
+}
   if (content === "!startmatch") {
     if (!hasAdminPermission(member)) return message.reply("You don't have permission to do this.");
     if (registrationOpen) return message.reply("Please close registration before starting the match.");
