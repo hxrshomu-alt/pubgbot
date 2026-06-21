@@ -1,5 +1,6 @@
 const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
 const TelegramBot = require("node-telegram-bot-api");
+const { MongoClient } = require("mongodb");
 const axios = require("axios");
 
 // ================= DISCORD =================
@@ -16,6 +17,18 @@ const tg = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
 // ================= CONFIG =================
 const API_KEY = process.env.PUBG_API_KEY;
+const mongoClient = new MongoClient(process.env.MONGODB_URI);
+
+async function connectDB() {
+  try {
+    await mongoClient.connect();
+    console.log("MongoDB connected");
+  } catch (err) {
+    console.error("MongoDB error:", err);
+  }
+}
+
+connectDB();
 
 // ================= CACHE =================
 const cache = new Map();
