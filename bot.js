@@ -405,12 +405,14 @@ client.on("messageCreate", async (message) => {
   if (!hasAdminPermission(member))
     return message.reply("You don't have permission.");
 
+  const now = new Date();
+
   const embed = new EmbedBuilder()
     .setColor(0x005BBB)
     .setTitle("🔥 SKIP UA CUSTOM MATCH")
     .setDescription(
-`📅 Сьогодні
-⏰ 21:00
+`📅 ${now.toLocaleDateString("uk-UA")}
+⏰ ${now.toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" })}
 
 🎮 PUBG Console
 
