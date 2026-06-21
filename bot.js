@@ -1,5 +1,6 @@
 const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
 const TelegramBot = require("node-telegram-bot-api");
+const SKIPUA_ROLE_ID = "1518313440400375888";
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
@@ -254,34 +255,79 @@ client.on("messageCreate", async (message) => {
     return handleStats(message, name);
   }
   
-  if (content.startsWith("!skipua")) {
+if (content.startsWith("!skipua")) {
   const db = loadDB();
 
-  const args = content.split(" ");
-  const gameName = args.slice(1).join(" ");
+  const gameName = content.split(" ").slice(1).join(" ");
 
   if (!gameName) {
-    return message.reply("❌ Напиши свій ігровий нік.\nПриклад: !skipua MyNick");
+    return message.reply("❌ Напиши свій PUBG нік\nПриклад: !skipua Nick");
+  }
+
+  // 🔎 перевірка PUBG ніка
+  const platforms = ["psn", "xbox"];
+  let found = false;
+
+  for (const platform of platforms) {
+    try {
+      const res = await apiGet(
+        `https://api.pubg.com/shards/${platform}/players?filter[playerNames]=${encodeURIComponent(gameName)}`
+      );
+
+      if (res.data?.data?.length > 0) {
+        found = true;
+        break;
+      }
+    } catch (e) {}
+  }
+
+  if (!found) {
+    return message.reply("❌ Такий PUBG нік не знайдено. Перевір написання.");
   }
 
   const userId = message.author.id;
 
-  if (!db.players[userId]) {
-    db.players[userId] = {
-      discordId: userId,
-      discordName: message.author.username,
-      gameName: gameName,
-      registeredAt: new Date().toISOString()
-    };
+  // 💾 запис в базу
+  db.players[userId] = {
+    discordId: userId,
+    discordName: message.author.username,
+    gameName,
+    registeredAt: new Date().toISOString()
+  };
 
-    saveDB(db);
-    return message.reply(`✅ Ти зареєстрований!\n🎮 Нік: **${gameName}**`);
-  }
-
-  db.players[userId].gameName = gameName;
   saveDB(db);
 
-  return message.reply(`🔄 Оновлено нік: **${gameName}**`);
+  // 🎖️ видача ролі
+  try {
+    const role = message.guild.roles.cache.get(SKIPUA_ROLE_ID);
+    const member = message.member;
+
+    if (role && member) {
+      await member.roles.add(role);
+    }
+  } catch (err) {
+    console.error("Role error:", err);
+  }
+
+  // 🎉 красиве повідомлення
+  const embed = new EmbedBuilder()
+    .setColor(0x00bfff)
+    .setTitle("🎮 ВІТАЄМО У SKIPUA")
+    .setDescription(
+      `Вітаю, тебе успішно зареєстровано в базі учасників **SkipUA**.\n\n` +
+      `🔹 Твій PUBG нік: **${gameName}**\n` +
+      `🔹 Статус: **Активний учасник**\n\n` +
+      `🚀 Надалі ти зможеш отримати:\n` +
+      `• Участь у кастомках\n` +
+      `• MVP систему\n` +
+      `• Лідерборди\n` +
+      `• Турніри та івенти`
+    )
+    .setColor(0x005BBB)
+    .setFooter({ text: "SKIP UA COMMUNITY" })
+    .setTimestamp();
+
+  return message.channel.send({ embeds: [embed] });
 }
 
   if (content.startsWith("!setformat")) {
