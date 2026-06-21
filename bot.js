@@ -1,6 +1,7 @@
 const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
 const TelegramBot = require("node-telegram-bot-api");
 const SKIPUA_ROLE_ID = "1518313440400375888";
+const db = require("./db");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
