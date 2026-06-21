@@ -55,7 +55,9 @@ const client = new Client({
 });
 
 // ================= TELEGRAM =================
-const tg = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
+const tg = new TelegramBot(process.env.TELEGRAM_TOKEN, {
+  polling: false
+});
 
 // ================= CONFIG =================
 const API_KEY = process.env.PUBG_API_KEY;
