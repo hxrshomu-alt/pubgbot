@@ -188,16 +188,16 @@ async function getStats(name) {
       } catch (e) {}
 
       const result = {
-        kills,
-        wins,
-        matches,
-        platform,
-        rate,
-        tier,
-        subTier,
-        rankPoints
-      };
-
+  kills,
+  wins,
+  matches,
+  damage: Object.values(modes).reduce((sum, m) => sum + (m.damageDealt || 0), 0),
+  platform,
+  rate,
+  tier,
+  subTier,
+  rankPoints
+};
       if (!best || result.kills > best.kills) best = result;
 
     } catch (e) {}
@@ -246,6 +246,16 @@ async function handleStats(message, name) {
 // ================= Події бота =================
 client.once("ready", () => {
   console.log(`Discord logged in as ${client.user.tag}`);
+
+  // MVP snapshot кожну годину
+  setInterval(() => {
+    takeSnapshot();
+  }, 60 * 60 * 1000);
+
+  // перший snapshot через 10 секунд після старту
+  setTimeout(() => {
+    takeSnapshot();
+  }, 10000);
 });
 
 client.on("messageCreate", async (message) => {
@@ -626,7 +636,52 @@ ${event.formats}
     return message.channel.send(text);
   }
 });
+// ================= MVP SNAPSHOT SYSTEM =================
 
+async function takeSnapshot() {
+  const db = loadDB();
+  const snapshots = loadSnapshots();
+
+  for (const userId in db.players) {
+    const player = db.players[userId];
+
+    try {
+      const stats = await getStats(player.gameName);
+      if (!stats) continue;
+
+      let userSnap = snapshots.find(s => s.discordId === userId);
+
+      if (!userSnap) {
+        userSnap = {
+          discordId: userId,
+          gameName: player.gameName,
+          history: []
+        };
+        snapshots.push(userSnap);
+      }
+
+      userSnap.history.push({
+        time: new Date().toISOString(),
+        kills: stats.kills,
+        wins: stats.wins,
+        matches: stats.matches,
+        damage: stats.damage
+      });
+
+      // залишаємо тільки останні 7 днів
+      const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+
+      userSnap.history = userSnap.history.filter(h =>
+        new Date(h.time).getTime() > cutoff
+      );
+
+    } catch (e) {
+      console.log("snapshot error:", e.message);
+    }
+  }
+
+  saveSnapshots(snapshots);
+}
 client.login(process.env.DISCORD_TOKEN);
 
 // ================= TELEGRAM COMMAND =================
