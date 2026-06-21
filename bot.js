@@ -76,6 +76,26 @@ function shuffle(array) {
     [array[i], array[j]] = [array[j], array[i]];
   }
 }
+function calculatePoints(oldSnap, newSnap) {
+  const kills = newSnap.kills - oldSnap.kills;
+  const wins = newSnap.wins - oldSnap.wins;
+  const matches = newSnap.matches - oldSnap.matches;
+  const damage = newSnap.damage - oldSnap.damage;
+
+  const points =
+    (kills * 2) +
+    (Math.floor(damage / 100) * 2) +
+    (matches * 1) +
+    (wins * 10);
+
+  return {
+    kills,
+    wins,
+    matches,
+    damage,
+    points
+  };
+}
 
 // ================= Free Translation via LibreTranslate =================
 async function translateTextLibre(text, targetLang = "uk") {
@@ -649,6 +669,7 @@ async function takeSnapshot() {
       const stats = await getStats(player.gameName);
       if (!stats) continue;
 
+      // 🔥 швидкий пошук або створення юзера
       let userSnap = snapshots.find(s => s.discordId === userId);
 
       if (!userSnap) {
@@ -660,15 +681,31 @@ async function takeSnapshot() {
         snapshots.push(userSnap);
       }
 
+      // 🔥 захист від undefined
+      const kills = stats.kills || 0;
+      const wins = stats.wins || 0;
+      const matches = stats.matches || 0;
+      const damage = stats.damage || 0;
+
+      // 🔥 єБали формула
+      const eBal =
+        (kills * 2) +
+        (Math.floor(damage / 100) * 2) +
+        (matches * 1) +
+        (wins * 10);
+
       userSnap.history.push({
         time: new Date().toISOString(),
-        kills: stats.kills,
-        wins: stats.wins,
-        matches: stats.matches,
-        damage: stats.damage
+
+        kills,
+        wins,
+        matches,
+        damage,
+
+        eBal
       });
 
-      // залишаємо тільки останні 7 днів
+      // 🔥 залишаємо тільки останні 7 днів
       const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
       userSnap.history = userSnap.history.filter(h =>
