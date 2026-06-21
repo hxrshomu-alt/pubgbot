@@ -405,21 +405,29 @@ client.on("messageCreate", async (message) => {
   if (!hasAdminPermission(member))
     return message.reply("You don't have permission.");
 
-  const now = new Date();
+  // 🔥 Дані івенту (міняєш тут під кожен турнір)
+  const event = {
+    title: "SKIP UA CUSTOM MATCH",
+    date: "Субота",
+    time: "20:00",
+    timezone: "за київським часом",
+    game: "PUBG Console",
+    formats: "2x2 • 4x4 • Arcade 6x6"
+  };
 
   const embed = new EmbedBuilder()
     .setColor(0x005BBB)
-    .setTitle("🔥 SKIP UA CUSTOM MATCH")
+    .setTitle(`🔥 ${event.title}`)
     .setDescription(
-`📅 ${now.toLocaleDateString("uk-UA")}
-⏰ ${now.toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" })}
+`📅 ${event.date}
+⏰ ${event.time} (${event.timezone})
 
-🎮 PUBG Console
+🎮 ${event.game}
 
 🟢 Реєстрація відкрита
 
 👥 Формати:
-2x2 • 4x4 • Arcade 6x6
+${event.formats}
 
 📝 Участь:
 \`!register\`
