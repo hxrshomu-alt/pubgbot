@@ -16,9 +16,13 @@ function loadDB() {
 }
 
 function saveDB(data) {
-  fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
+  try {
+    fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
+    console.log("DB saved OK");
+  } catch (e) {
+    console.log("DB SAVE ERROR:", e);
+  }
 }
-
 // ================= SNAPSHOTS (MVP SYSTEM) =================
 const SNAPSHOT_PATH = path.join(__dirname, "data/snapshots.json");
 
@@ -313,13 +317,20 @@ client.on("messageCreate", async (message) => {
   }
   
 if (content.startsWith("!skipua")) {
+
+  console.log("🔥 !skipua triggered");
+
   const db = loadDB();
+
+  console.log("📂 DB loaded:", db);
 
   const gameName = content.split(" ").slice(1).join(" ");
 
   if (!gameName) {
     return message.reply("❌ Напиши свій PUBG нік\nПриклад: !skipua Nick");
   }
+
+  console.log("🎮 Game name:", gameName);
 
   // 🔎 перевірка PUBG ніка
   const platforms = ["psn", "xbox"];
@@ -335,14 +346,19 @@ if (content.startsWith("!skipua")) {
         found = true;
         break;
       }
-    } catch (e) {}
+    } catch (e) {
+      console.log("PUBG API error:", e.message);
+    }
   }
 
   if (!found) {
+    console.log("❌ Player not found in PUBG API");
     return message.reply("❌ Такий PUBG нік не знайдено. Перевір написання.");
   }
 
   const userId = message.author.id;
+
+  console.log("👤 User ID:", userId);
 
   // 💾 запис в базу
   db.players[userId] = {
@@ -352,7 +368,11 @@ if (content.startsWith("!skipua")) {
     registeredAt: new Date().toISOString()
   };
 
+  console.log("💾 Before save:", db);
+
   saveDB(db);
+
+  console.log("✅ DB SAVED SUCCESSFULLY");
 
   // 🎖️ видача ролі
   try {
@@ -361,12 +381,13 @@ if (content.startsWith("!skipua")) {
 
     if (role && member) {
       await member.roles.add(role);
+      console.log("🎖️ Role assigned");
     }
   } catch (err) {
     console.error("Role error:", err);
   }
 
-  // 🎉 красиве повідомлення
+  // 🎉 embed
   const embed = new EmbedBuilder()
     .setColor(0x00bfff)
     .setTitle("🎮 ВІТАЄМО У SKIPUA")
