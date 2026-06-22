@@ -207,13 +207,13 @@ async function takeSnapshot() {
       const kills   = stats.kills   || 0;
       const wins    = stats.wins    || 0;
       const matches = stats.matches || 0;
-      const damage  = stats.damage  || 0;
+      const damage = Math.floor(Number(stats.damage || 0));
 
       const eBal =
-        (kills * 2) +
-        (Math.floor(damage / 100) * 2) +
-        (matches * 1) +
-        (wins * 10);
+  kills * 2 +
+  Math.floor(damage / 100) * 2 +
+  matches +
+  wins * 10;
 
       const { error: insertError } = await supabase.from("snapshots").insert({
         discord_id: player.discord_id,
@@ -222,7 +222,7 @@ async function takeSnapshot() {
         wins,
         matches,
         damage,
-        e_bal: eBal
+        ebal: Math.floor(eBal)
       });
 
       if (insertError) console.error("Snapshot insert error:", insertError);
@@ -276,7 +276,21 @@ client.on("messageCreate", async (message) => {
     if (!name) return message.reply("Use: !stats nickname");
     return handleStats(message, name);
   }
+if (content === "!snapshot") {
+  if (!hasAdminPermission(member)) {
+    return message.reply("❌ You don't have permission.");
+  }
 
+  message.channel.send("⏳ Running snapshot now...");
+
+  try {
+    await takeSnapshot();
+    return message.channel.send("✅ Snapshot completed successfully!");
+  } catch (err) {
+    console.error("Manual snapshot error:", err);
+    return message.channel.send("❌ Snapshot failed. Check logs.");
+  }
+}
   // !skipua — реєстрація в базі
   if (content.startsWith("!skipua")) {
     const gameName = content.split(" ").slice(1).join(" ");
