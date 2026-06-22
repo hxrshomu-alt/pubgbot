@@ -1,93 +1,35 @@
 const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
 const TelegramBot = require("node-telegram-bot-api");
-const SKIPUA_ROLE_ID = "1518313440400375888";
-const db = require("./db");
+const { createClient } = require("@supabase/supabase-js");
 const axios = require("axios");
-const fs = require("fs");
-const path = require("path");
 
-// ================ DATABASE ================
-const DB_PATH = path.join(__dirname, "data/players.json");
+// ================ SUPABASE ================
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_KEY
+);
 
-function loadDB() {
-  if (!fs.existsSync(DB_PATH)) {
-    fs.writeFileSync(DB_PATH, JSON.stringify({ players: {}, matches: [] }, null, 2));
-  }
-  return JSON.parse(fs.readFileSync(DB_PATH, "utf8"));
-}
-
-function saveDB(data) {
-  try {
-    fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
-    console.log("DB saved OK");
-  } catch (e) {
-    console.log("DB SAVE ERROR:", e);
-  }
-}
-// ================= SNAPSHOTS (MVP SYSTEM) =================
-const SNAPSHOT_PATH = path.join(__dirname, "data/snapshots.json");
-
-function loadSnapshots() {
-  try {
-    if (!fs.existsSync(SNAPSHOT_PATH)) {
-      fs.writeFileSync(SNAPSHOT_PATH, "[]");
-    }
-
-    const raw = fs.readFileSync(SNAPSHOT_PATH, "utf8");
-
-    if (!raw || !raw.trim()) return [];
-
-    return JSON.parse(raw);
-  } catch (e) {
-    console.log("Snapshots corrupted → resetting file");
-
-    fs.writeFileSync(SNAPSHOT_PATH, "[]");
-    return [];
-  }
-}
-
-function saveSnapshots(data) {
-  fs.writeFileSync(SNAPSHOT_PATH, JSON.stringify(data, null, 2));
-}
-
-// ================= DISCORD =================
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
-});
-
-// ================= TELEGRAM =================
-const tg = new TelegramBot(process.env.TELEGRAM_TOKEN, {
-  polling: false
-});
-
-// ================= CONFIG =================
+const SKIPUA_ROLE_ID = "1518313440400375888";
+const PUBG_EVENTS_CHANNEL_ID = "1516535807756861560";
 const API_KEY = process.env.PUBG_API_KEY;
 
-// ================= CACHE =================
+// ================ CACHE ================
 const cache = new Map();
 const seasonCache = new Map();
 const CACHE_TIME = 5 * 60 * 1000;
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-// ================= GLOBALS =================
+// ================ GLOBALS ================
 let registeredPlayers = new Set();
 let registrationOpen = false;
-let customMatchFormat = null; // 1,2,3,4
+let customMatchFormat = null;
 let lastTeamSize = null;
-const matchHistory = [];
 
 const maps = [
   "Taego", "Erangel", "Miramar", "Paramo", "Sanhok",
   "Karakin", "Deston", "Rondo", "Vikendi"
 ];
-
-// Вкажи ID каналу офіційних подій PUBG для перекладу
-const PUBG_EVENTS_CHANNEL_ID = "1516535807756861560"; // Заміни на свій ID каналу
 
 function shuffle(array) {
   for (let i = array.length - 1; i > 0; i--) {
@@ -95,46 +37,8 @@ function shuffle(array) {
     [array[i], array[j]] = [array[j], array[i]];
   }
 }
-function calculatePoints(oldSnap, newSnap) {
-  const kills = newSnap.kills - oldSnap.kills;
-  const wins = newSnap.wins - oldSnap.wins;
-  const matches = newSnap.matches - oldSnap.matches;
-  const damage = newSnap.damage - oldSnap.damage;
 
-  const points =
-    (kills * 2) +
-    (Math.floor(damage / 100) * 2) +
-    (matches * 1) +
-    (wins * 10);
-
-  return {
-    kills,
-    wins,
-    matches,
-    damage,
-    points
-  };
-}
-
-// ================= Free Translation via LibreTranslate =================
-async function translateTextLibre(text, targetLang = "uk") {
-  try {
-    const res = await axios.post("https://libretranslate.de/translate", {
-      q: text,
-      source: "en",
-      target: targetLang,
-      format: "text"
-    }, {
-      headers: { "Content-Type": "application/json" }
-    });
-    return res.data.translatedText;
-  } catch (error) {
-    console.error("LibreTranslate error:", error);
-    return null;
-  }
-}
-
-// ================= PUBG API =================
+// ================ PUBG API ================
 async function apiGet(url, retry = 1) {
   try {
     await sleep(1200);
@@ -185,7 +89,6 @@ async function getStats(name) {
       if (!modes) continue;
 
       let kills = 0, wins = 0, matches = 0;
-
       for (const m in modes) {
         kills += modes[m].kills || 0;
         wins += modes[m].wins || 0;
@@ -193,31 +96,22 @@ async function getStats(name) {
       }
 
       const kd = kills / (matches || 1);
-      const rate = Math.round(
-        (kills * 1.2 + wins * 15 + kd * 10) / (matches || 1)
-      );
+      const rate = Math.round((kills * 1.2 + wins * 15 + kd * 10) / (matches || 1));
 
-      let tier = "Unranked";
-      let subTier = "";
-      let rankPoints = 0;
+      let tier = "Unranked", subTier = "", rankPoints = 0;
 
       try {
         const seasonId = await getCurrentSeason(platform);
-
         const rankedRes = await apiGet(
           `https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/${seasonId}/ranked`
         );
-
         const rankedStats = rankedRes.data?.data?.attributes?.rankedGameModeStats;
-
         if (rankedStats) {
-          const modes = Object.values(rankedStats);
-          const bestMode = modes.reduce((best, cur) => {
+          const bestMode = Object.values(rankedStats).reduce((best, cur) => {
             if (!cur?.currentTier) return best;
             if (!best) return cur;
             return (cur.currentRankPoint || 0) > (best.currentRankPoint || 0) ? cur : best;
           }, null);
-
           if (bestMode?.currentTier) {
             tier = bestMode.currentTier.tier || "Unranked";
             subTier = bestMode.currentTier.subTier || "";
@@ -227,18 +121,18 @@ async function getStats(name) {
       } catch (e) {}
 
       const result = {
-  kills,
-  wins,
-  matches,
-  damage: Object.values(modes).reduce((sum, m) => sum + (m.damageDealt || 0), 0),
-  platform,
-  rate,
-  tier,
-  subTier,
-  rankPoints
-};
-      if (!best || result.kills > best.kills) best = result;
+        kills,
+        wins,
+        matches,
+        damage: Object.values(modes).reduce((sum, m) => sum + (m.damageDealt || 0), 0),
+        platform,
+        rate,
+        tier,
+        subTier,
+        rankPoints
+      };
 
+      if (!best || result.kills > best.kills) best = result;
     } catch (e) {}
   }
 
@@ -246,18 +140,36 @@ async function getStats(name) {
   return best;
 }
 
-// ================= Права адміністратора =================
+// ================ TRANSLATION ================
+async function translateTextLibre(text, targetLang = "uk") {
+  try {
+    const res = await axios.post("https://libretranslate.de/translate", {
+      q: text,
+      source: "en",
+      target: targetLang,
+      format: "text"
+    }, { headers: { "Content-Type": "application/json" } });
+    return res.data.translatedText;
+  } catch (error) {
+    console.error("LibreTranslate error:", error);
+    return null;
+  }
+}
+
+// ================ PERMISSIONS ================
 function hasAdminPermission(member) {
   if (!member) return false;
   if (member.permissions.has("Administrator")) return true;
-  if (member.roles && member.roles.cache) {
-    const superAdminRole = member.roles.cache.find(role => role.name.toLowerCase().replace(/[-_]/g, " ") === "супер адмін");
+  if (member.roles?.cache) {
+    const superAdminRole = member.roles.cache.find(
+      role => role.name.toLowerCase().replace(/[-_]/g, " ") === "супер адмін"
+    );
     if (superAdminRole) return true;
   }
   return false;
 }
 
-// ================= Обробник статистики =================
+// ================ STATS HANDLER ================
 async function handleStats(message, name) {
   const msg = await message.reply("⏳ loading player data...");
   const data = await getStats(name);
@@ -282,150 +194,164 @@ async function handleStats(message, name) {
   msg.edit({ content: " ", embeds: [embed] });
 }
 
-// ================= Події бота =================
+// ================ MVP SNAPSHOT ================
+async function takeSnapshot() {
+  const { data: players, error } = await supabase.from("players").select("*");
+  if (error) return console.error("Snapshot fetch players error:", error);
+
+  for (const player of players) {
+    try {
+      const stats = await getStats(player.game_name);
+      if (!stats) continue;
+
+      const kills   = stats.kills   || 0;
+      const wins    = stats.wins    || 0;
+      const matches = stats.matches || 0;
+      const damage  = stats.damage  || 0;
+
+      const eBal =
+        (kills * 2) +
+        (Math.floor(damage / 100) * 2) +
+        (matches * 1) +
+        (wins * 10);
+
+      const { error: insertError } = await supabase.from("snapshots").insert({
+        discord_id: player.discord_id,
+        game_name:  player.game_name,
+        kills,
+        wins,
+        matches,
+        damage,
+        e_bal: eBal
+      });
+
+      if (insertError) console.error("Snapshot insert error:", insertError);
+
+      // Видаляємо знімки старші 7 днів
+      const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      await supabase
+        .from("snapshots")
+        .delete()
+        .eq("discord_id", player.discord_id)
+        .lt("taken_at", cutoff);
+
+    } catch (e) {
+      console.error("Snapshot error for", player.game_name, e.message);
+    }
+  }
+
+  console.log("✅ Snapshots taken");
+}
+
+// ================ DISCORD ================
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
+});
+
 client.once("ready", () => {
   console.log(`Discord logged in as ${client.user.tag}`);
-
-  // MVP snapshot кожну годину
-  setInterval(() => {
-    takeSnapshot();
-  }, 60 * 60 * 1000);
-
-  // перший snapshot через 10 секунд після старту
-  setTimeout(() => {
-    takeSnapshot();
-  }, 10000);
+  setInterval(() => takeSnapshot(), 60 * 60 * 1000);
+  setTimeout(() => takeSnapshot(), 10000);
 });
 
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
-  // Переклад для каналу подій PUBG
+  // Переклад каналу подій
   if (message.channel.id === PUBG_EVENTS_CHANNEL_ID) {
     const translated = await translateTextLibre(message.content);
-    if (translated) {
-      await message.channel.send(`🇺🇦 Переклад:\n${translated}`);
-    }
+    if (translated) await message.channel.send(`🇺🇦 Переклад:\n${translated}`);
   }
 
   const content = message.content.trim();
   const member = message.member;
 
+  // !stats
   if (content.startsWith("!stats")) {
     const name = content.split(" ")[1];
     if (!name) return message.reply("Use: !stats nickname");
     return handleStats(message, name);
   }
-  
-if (content.startsWith("!skipua")) {
 
-  console.log("🔥 !skipua triggered");
+  // !skipua — реєстрація в базі
+  if (content.startsWith("!skipua")) {
+    const gameName = content.split(" ").slice(1).join(" ");
+    if (!gameName) return message.reply("❌ Напиши свій PUBG нік\nПриклад: !skipua Nick");
 
-  const db = loadDB();
+    // Перевірка ніка через PUBG API
+    const platforms = ["psn", "xbox"];
+    let found = false;
+    for (const platform of platforms) {
+      try {
+        const res = await apiGet(
+          `https://api.pubg.com/shards/${platform}/players?filter[playerNames]=${encodeURIComponent(gameName)}`
+        );
+        if (res.data?.data?.length > 0) { found = true; break; }
+      } catch (e) {}
+    }
 
-  console.log("📂 DB loaded:", db);
+    if (!found) return message.reply("❌ Такий PUBG нік не знайдено. Перевір написання.");
 
-  const gameName = content.split(" ").slice(1).join(" ");
+    const { error } = await supabase.from("players").upsert({
+      discord_id:   message.author.id,
+      discord_name: message.author.username,
+      game_name:    gameName,
+      registered_at: new Date().toISOString()
+    }, { onConflict: "discord_id" });
 
-  if (!gameName) {
-    return message.reply("❌ Напиши свій PUBG нік\nПриклад: !skipua Nick");
-  }
+    if (error) {
+      console.error("Supabase upsert error:", error);
+      return message.reply("❌ Помилка при збереженні в базу.");
+    }
 
-  console.log("🎮 Game name:", gameName);
-
-  // 🔎 перевірка PUBG ніка
-  const platforms = ["psn", "xbox"];
-  let found = false;
-
-  for (const platform of platforms) {
+    // Видача ролі
     try {
-      const res = await apiGet(
-        `https://api.pubg.com/shards/${platform}/players?filter[playerNames]=${encodeURIComponent(gameName)}`
-      );
-
-      if (res.data?.data?.length > 0) {
-        found = true;
-        break;
-      }
-    } catch (e) {
-      console.log("PUBG API error:", e.message);
+      const role = message.guild.roles.cache.get(SKIPUA_ROLE_ID);
+      if (role && member) await member.roles.add(role);
+    } catch (err) {
+      console.error("Role error:", err);
     }
+
+    const embed = new EmbedBuilder()
+      .setColor(0x005BBB)
+      .setTitle("🎮 ВІТАЄМО У SKIPUA")
+      .setDescription(
+        `Вітаю, тебе успішно зареєстровано в базі учасників **SkipUA**.\n\n` +
+        `🔹 Твій PUBG нік: **${gameName}**\n` +
+        `🔹 Статус: **Активний учасник**\n\n` +
+        `🚀 Надалі ти зможеш отримати:\n` +
+        `• Участь у кастомках\n• MVP систему\n• Лідерборди\n• Турніри та івенти`
+      )
+      .setFooter({ text: "SKIP UA COMMUNITY" })
+      .setTimestamp();
+
+    return message.channel.send({ embeds: [embed] });
   }
 
-  if (!found) {
-    console.log("❌ Player not found in PUBG API");
-    return message.reply("❌ Такий PUBG нік не знайдено. Перевір написання.");
-  }
-
-  const userId = message.author.id;
-
-  console.log("👤 User ID:", userId);
-
-  // 💾 запис в базу
-  db.players[userId] = {
-    discordId: userId,
-    discordName: message.author.username,
-    gameName,
-    registeredAt: new Date().toISOString()
-  };
-
-  console.log("💾 Before save:", db);
-
-  saveDB(db);
-
-  console.log("✅ DB SAVED SUCCESSFULLY");
-
-  // 🎖️ видача ролі
-  try {
-    const role = message.guild.roles.cache.get(SKIPUA_ROLE_ID);
-    const member = message.member;
-
-    if (role && member) {
-      await member.roles.add(role);
-      console.log("🎖️ Role assigned");
-    }
-  } catch (err) {
-    console.error("Role error:", err);
-  }
-
-  // 🎉 embed
-  const embed = new EmbedBuilder()
-    .setColor(0x00bfff)
-    .setTitle("🎮 ВІТАЄМО У SKIPUA")
-    .setDescription(
-      `Вітаю, тебе успішно зареєстровано в базі учасників **SkipUA**.\n\n` +
-      `🔹 Твій PUBG нік: **${gameName}**\n` +
-      `🔹 Статус: **Активний учасник**\n\n` +
-      `🚀 Надалі ти зможеш отримати:\n` +
-      `• Участь у кастомках\n` +
-      `• MVP систему\n` +
-      `• Лідерборди\n` +
-      `• Турніри та івенти`
-    )
-    .setColor(0x005BBB)
-    .setFooter({ text: "SKIP UA COMMUNITY" })
-    .setTimestamp();
-
-  return message.channel.send({ embeds: [embed] });
-}
-
+  // !setformat
   if (content.startsWith("!setformat")) {
     if (!hasAdminPermission(member)) return message.reply("You don't have permission to do this.");
     const format = parseInt(content.split(" ")[1], 10);
     if (![1, 2, 3, 4].includes(format)) return message.reply("Format must be 1 (solo), 2, 3 or 4");
     customMatchFormat = format;
-    return message.channel.send(`Custom match format set to ${format === 1 ? "solo (each for themselves)" : `${format} players per team`}.`);
+    return message.channel.send(`Custom match format set to ${format === 1 ? "solo" : `${format} players per team`}.`);
   }
 
+  // !openreg
   if (content === "!openreg") {
     if (!hasAdminPermission(member)) return message.reply("You don't have permission to do this.");
     if (!customMatchFormat) return message.reply("Set match format first with !setformat");
     if (registrationOpen) return message.reply("Registration is already open.");
     registrationOpen = true;
     registeredPlayers.clear();
-    return message.channel.send(`Registration opened! Format: ${customMatchFormat === 1 ? "solo (each for themselves)" : `${customMatchFormat} players per team`}.`);
+    return message.channel.send(`Registration opened! Format: ${customMatchFormat === 1 ? "solo" : `${customMatchFormat} players per team`}.`);
   }
 
+  // !closereg
   if (content === "!closereg") {
     if (!hasAdminPermission(member)) return message.reply("You don't have permission to do this.");
     if (!registrationOpen) return message.reply("Registration is not open.");
@@ -434,6 +360,7 @@ if (content.startsWith("!skipua")) {
     return message.channel.send(`Registration closed. Registered players: ${registeredPlayers.size}`);
   }
 
+  // !register
   if (content === "!register") {
     if (!registrationOpen) return message.reply("Registration is currently closed.");
     if (registeredPlayers.has(message.author.id)) return message.reply("You are already registered.");
@@ -441,6 +368,7 @@ if (content.startsWith("!skipua")) {
     return message.reply("You have been registered for the custom match!");
   }
 
+  // !unregister
   if (content === "!unregister") {
     if (!registrationOpen) return message.reply("Registration is currently closed.");
     if (!registeredPlayers.has(message.author.id)) return message.reply("You are not registered.");
@@ -448,149 +376,100 @@ if (content.startsWith("!skipua")) {
     return message.reply("You have been unregistered from the custom match.");
   }
 
-  // --- Нові команди адміністратора ---
+  // !addplayer
   if (content.startsWith("!addplayer")) {
     if (!hasAdminPermission(member)) return message.reply("You don't have permission to do this.");
     if (!registrationOpen) return message.reply("Registration is currently closed.");
-
     const user = message.mentions.users.first();
     if (!user) return message.reply("Please mention a user to add.");
     if (registeredPlayers.has(user.id)) return message.reply("User is already registered.");
-
     registeredPlayers.add(user.id);
     return message.channel.send(`${user.username} has been added to the custom match registration.`);
   }
 
+  // !removeplayer
   if (content.startsWith("!removeplayer")) {
     if (!hasAdminPermission(member)) return message.reply("You don't have permission to do this.");
     if (!registrationOpen) return message.reply("Registration is currently closed.");
-
     const user = message.mentions.users.first();
     if (!user) return message.reply("Please mention a user to remove.");
     if (!registeredPlayers.has(user.id)) return message.reply("User is not registered.");
-
     registeredPlayers.delete(user.id);
     return message.channel.send(`${user.username} has been removed from the custom match registration.`);
   }
-  // --- Кінець нових команд ---
 
+  // !list
   if (content === "!list") {
+    if (registeredPlayers.size === 0) return message.channel.send("❌ No players registered yet.");
 
-  if (registeredPlayers.size === 0)
-    return message.channel.send("❌ No players registered yet.");
-
-  const membersArr = await Promise.all(
-    Array.from(registeredPlayers).map(id =>
-      message.guild.members.fetch(id).catch(() => null)
-    )
-  );
-
-  const names = membersArr
-    .filter(m => m)
-    .map((m, index) => `${index + 1}. ${m.user.username}`);
-
-  const embed = new EmbedBuilder()
-    .setColor(0x00bfff)
-    .setTitle("🎮 REGISTERED PLAYERS")
-    .setDescription(names.join("\n"))
-    .addFields(
-      {
-        name: "👥 Total Players",
-        value: `${registeredPlayers.size}`,
-        inline: true
-      },
-      {
-        name: "🎯 Format",
-        value: customMatchFormat
-          ? (customMatchFormat === 1
-              ? "Solo"
-              : `${customMatchFormat} players/team`)
-          : "Not set",
-        inline: true
-      }
-    )
-    .setFooter({
-      text: "SKIP UA CUSTOM MATCH"
-    })
-    .setTimestamp();
-
-  return message.channel.send({
-    embeds: [embed]
-  });
-}
-  if (content.startsWith("!maketeams")) {
-
-  if (!hasAdminPermission(member))
-    return message.reply("You don't have permission.");
-
-  if (registrationOpen)
-    return message.reply("❌ Close registration first with !closereg.");
-
-  const args = content.split(" ");
-  const teamSize = parseInt(args[1]);
-
-  if (![1, 2, 3, 4, 6].includes(teamSize))
-    return message.reply("Usage: !maketeams 1|2|3|4|6");
-
-  const playerIds = Array.from(registeredPlayers);
-
-  if (playerIds.length < teamSize * 2)
-    return message.reply("❌ Not enough players.");
-
-  if (playerIds.length % teamSize !== 0)
-    return message.reply(
-      `❌ ${playerIds.length} players cannot be divided into teams of ${teamSize}.`
-    );
-
-  shuffle(playerIds);
-
-  lastTeamSize = teamSize;
-
-  let response = "🔥 RANDOM TEAMS\n\n";
-
-  const teamsCount = playerIds.length / teamSize;
-
-  for (let i = 0; i < teamsCount; i++) {
-
-    const team = playerIds.slice(
-      i * teamSize,
-      (i + 1) * teamSize
-    );
-
-    const names = await Promise.all(
-      team.map(id =>
-        message.guild.members.fetch(id)
-          .then(m => m.user.username)
-          .catch(() => "Unknown")
+    const membersArr = await Promise.all(
+      Array.from(registeredPlayers).map(id =>
+        message.guild.members.fetch(id).catch(() => null)
       )
     );
 
-    response += `🛡 Team ${i + 1}\n`;
-    response += names.join("\n");
-    response += "\n\n";
+    const names = membersArr.filter(m => m).map((m, i) => `${i + 1}. ${m.user.username}`);
+
+    const embed = new EmbedBuilder()
+      .setColor(0x00bfff)
+      .setTitle("🎮 REGISTERED PLAYERS")
+      .setDescription(names.join("\n"))
+      .addFields(
+        { name: "👥 Total Players", value: `${registeredPlayers.size}`, inline: true },
+        { name: "🎯 Format", value: customMatchFormat ? (customMatchFormat === 1 ? "Solo" : `${customMatchFormat} players/team`) : "Not set", inline: true }
+      )
+      .setFooter({ text: "SKIP UA CUSTOM MATCH" })
+      .setTimestamp();
+
+    return message.channel.send({ embeds: [embed] });
   }
 
-  return message.channel.send(response);
-}
+  // !maketeams
+  if (content.startsWith("!maketeams")) {
+    if (!hasAdminPermission(member)) return message.reply("You don't have permission.");
+    if (registrationOpen) return message.reply("❌ Close registration first with !closereg.");
+
+    const teamSize = parseInt(content.split(" ")[1]);
+    if (![1, 2, 3, 4, 6].includes(teamSize)) return message.reply("Usage: !maketeams 1|2|3|4|6");
+
+    const playerIds = Array.from(registeredPlayers);
+    if (playerIds.length < teamSize * 2) return message.reply("❌ Not enough players.");
+    if (playerIds.length % teamSize !== 0) return message.reply(`❌ ${playerIds.length} players cannot be divided into teams of ${teamSize}.`);
+
+    shuffle(playerIds);
+    lastTeamSize = teamSize;
+
+    let response = "🔥 RANDOM TEAMS\n\n";
+    const teamsCount = playerIds.length / teamSize;
+
+    for (let i = 0; i < teamsCount; i++) {
+      const team = playerIds.slice(i * teamSize, (i + 1) * teamSize);
+      const names = await Promise.all(
+        team.map(id => message.guild.members.fetch(id).then(m => m.user.username).catch(() => "Unknown"))
+      );
+      response += `🛡 Team ${i + 1}\n${names.join("\n")}\n\n`;
+    }
+
+    return message.channel.send(response);
+  }
+
+  // !announce
   if (content === "!announce") {
+    if (!hasAdminPermission(member)) return message.reply("You don't have permission.");
 
-  if (!hasAdminPermission(member))
-    return message.reply("You don't have permission.");
+    const event = {
+      title: "SKIP UA CUSTOM MATCH",
+      date: "Субота",
+      time: "20:00",
+      timezone: "за київським часом",
+      game: "PUBG Console",
+      formats: "2x2 • 4x4 • Arcade 6x6"
+    };
 
-  // 🔥 Дані івенту (міняєш тут під кожен турнір)
-  const event = {
-    title: "SKIP UA CUSTOM MATCH",
-    date: "Субота",
-    time: "20:00",
-    timezone: "за київським часом",
-    game: "PUBG Console",
-    formats: "2x2 • 4x4 • Arcade 6x6"
-  };
-
-  const embed = new EmbedBuilder()
-    .setColor(0x005BBB)
-    .setTitle(`🔥 ${event.title}`)
-    .setDescription(
+    const embed = new EmbedBuilder()
+      .setColor(0x005BBB)
+      .setTitle(`🔥 ${event.title}`)
+      .setDescription(
 `📅 ${event.date}
 ⏰ ${event.time} (${event.timezone})
 
@@ -608,25 +487,21 @@ ${event.formats}
 \`!list\`
 
 🇺🇦 SKIP UA`
-    )
-    .setFooter({
-      text: "Winner Winner Chicken Dinner 🍗"
-    })
-    .setTimestamp();
+      )
+      .setFooter({ text: "Winner Winner Chicken Dinner 🍗" })
+      .setTimestamp();
 
-  return message.channel.send({
-    content: "@everyone",
-    embeds: [embed]
-  });
-}
+    return message.channel.send({ content: "@everyone", embeds: [embed] });
+  }
+
+  // !startmatch
   if (content === "!startmatch") {
     if (!hasAdminPermission(member)) return message.reply("You don't have permission to do this.");
     if (registrationOpen) return message.reply("Please close registration before starting the match.");
     if (!customMatchFormat) return message.reply("Set match format first.");
-    const count = registeredPlayers.size;
-    if (count < (customMatchFormat === 1 ? 1 : customMatchFormat * 2))
-      return message.reply("Not enough players.");
 
+    const count = registeredPlayers.size;
+    if (count < (customMatchFormat === 1 ? 1 : customMatchFormat * 2)) return message.reply("Not enough players.");
     if (customMatchFormat !== 1 && count % customMatchFormat !== 0)
       return message.reply(`Player count must be multiple of ${customMatchFormat}.`);
 
@@ -635,129 +510,76 @@ ${event.formats}
 
     const selectedMap = maps[Math.floor(Math.random() * maps.length)];
     let response = `Map selected for the match: **${selectedMap}**\n\n`;
+    let matchData = {};
 
     if (customMatchFormat === 1) {
       const memberNames = await Promise.all(
         playersArray.map(id => message.guild.members.fetch(id).then(m => m.user.username).catch(() => "Unknown"))
       );
       response += "Solo mode match started! Players:\n" + memberNames.join("\n");
+      matchData = { players: memberNames };
+
+      await supabase.from("matches").insert({ format: "Solo", map: selectedMap, data: matchData });
       registeredPlayers.clear();
-      matchHistory.push({
-        date: new Date().toISOString(),
-        format: "Solo",
-        map: selectedMap,
-        players: memberNames
-      });
       return message.channel.send(response);
     } else {
       const teamsCount = count / customMatchFormat;
       response += `Match started! Forming ${teamsCount} teams with ${customMatchFormat} players each.\n\n`;
-      let teamsForHistory = [];
+      let teams = [];
+
       for (let i = 0; i < teamsCount; i++) {
         const team = playersArray.slice(i * customMatchFormat, (i + 1) * customMatchFormat);
         const memberNames = await Promise.all(
           team.map(id => message.guild.members.fetch(id).then(m => m.user.username).catch(() => "Unknown"))
         );
         response += `**Team ${i + 1}**: ${memberNames.join(", ")}\n\n`;
-        teamsForHistory.push(memberNames);
+        teams.push(memberNames);
       }
-      registeredPlayers.clear();
-      matchHistory.push({
-        date: new Date().toISOString(),
+
+      await supabase.from("matches").insert({
         format: `${customMatchFormat}x${customMatchFormat}`,
         map: selectedMap,
-        teams: teamsForHistory
+        data: { teams }
       });
+
+      registeredPlayers.clear();
       return message.channel.send(response);
     }
   }
 
+  // !custom
   if (content === "!custom") {
     const status = registrationOpen ? "open" : "closed";
     const formatText = customMatchFormat
       ? (customMatchFormat === 1 ? "Solo (each for themselves)" : `${customMatchFormat} players per team`)
       : "Not set";
-    const dateStr = "Date and time of the match: To be set";
-    return message.channel.send(`Custom match info:\nStatus: ${status}\nFormat: ${formatText}\n${dateStr}`);
+    return message.channel.send(`Custom match info:\nStatus: ${status}\nFormat: ${formatText}`);
   }
 
+  // !matchhistory — тягнемо з Supabase
   if (content === "!matchhistory") {
-    if (matchHistory.length === 0) {
-      return message.channel.send("Match history is empty.");
-    }
+    const { data: matches, error } = await supabase
+      .from("matches")
+      .select("*")
+      .order("played_at", { ascending: false })
+      .limit(5);
+
+    if (error || !matches?.length) return message.channel.send("Match history is empty.");
+
     let text = "Last matches:\n\n";
-    matchHistory.slice(-5).reverse().forEach((m, i) => {
-      text += `${i + 1}. ${m.date} | Format: ${m.format} | Map: ${m.map}\n`;
+    matches.forEach((m, i) => {
+      text += `${i + 1}. ${m.played_at} | Format: ${m.format} | Map: ${m.map}\n`;
     });
+
     return message.channel.send(text);
   }
 });
-// ================= MVP SNAPSHOT SYSTEM =================
 
-async function takeSnapshot() {
-  const db = loadDB();
-  const snapshots = loadSnapshots();
-
-  for (const userId in db.players) {
-    const player = db.players[userId];
-
-    try {
-      const stats = await getStats(player.gameName);
-      if (!stats) continue;
-
-      // 🔥 швидкий пошук або створення юзера
-      let userSnap = snapshots.find(s => s.discordId === userId);
-
-      if (!userSnap) {
-        userSnap = {
-          discordId: userId,
-          gameName: player.gameName,
-          history: []
-        };
-        snapshots.push(userSnap);
-      }
-
-      // 🔥 захист від undefined
-      const kills = stats.kills || 0;
-      const wins = stats.wins || 0;
-      const matches = stats.matches || 0;
-      const damage = stats.damage || 0;
-
-      // 🔥 єБали формула
-      const eBal =
-        (kills * 2) +
-        (Math.floor(damage / 100) * 2) +
-        (matches * 1) +
-        (wins * 10);
-
-      userSnap.history.push({
-        time: new Date().toISOString(),
-
-        kills,
-        wins,
-        matches,
-        damage,
-
-        eBal
-      });
-
-      // 🔥 залишаємо тільки останні 7 днів
-      const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
-
-      userSnap.history = userSnap.history.filter(h =>
-        new Date(h.time).getTime() > cutoff
-      );
-
-    } catch (e) {
-      console.log("snapshot error:", e.message);
-    }
-  }
-
-  saveSnapshots(snapshots);
-}
 client.login(process.env.DISCORD_TOKEN);
 
-// ================= TELEGRAM COMMAND =================
+// ================ TELEGRAM ================
+const tg = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: false });
+
 tg.onText(/\/stats (.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const name = match[1];
@@ -769,21 +591,11 @@ tg.onText(/\/stats (.+)/, async (msg, match) => {
   const winrate = ((data.wins / (data.matches || 1)) * 100).toFixed(1);
 
   const text =
-    `🎮 PUBG PLAYER PROFILE
-
-👤 ${name}
-🖥 Platform: ${data.platform.toUpperCase()}
-
-📊 Kills: ${data.kills}
-🎯 Matches: ${data.matches}
-🏆 Wins: ${data.wins}
-
-⚔️ K/D: ${kd}
-📊 Winrate: ${winrate}%
-🔥 Rate: ${data.rate}
-
-🏅 Rank: ${data.tier} ${data.subTier}
-📊 RP: ${data.rankPoints}`;
+    `🎮 PUBG PLAYER PROFILE\n\n` +
+    `👤 ${name}\n🖥 Platform: ${data.platform.toUpperCase()}\n\n` +
+    `📊 Kills: ${data.kills}\n🎯 Matches: ${data.matches}\n🏆 Wins: ${data.wins}\n\n` +
+    `⚔️ K/D: ${kd}\n📊 Winrate: ${winrate}%\n🔥 Rate: ${data.rate}\n\n` +
+    `🏅 Rank: ${data.tier} ${data.subTier}\n📊 RP: ${data.rankPoints}`;
 
   tg.sendMessage(chatId, text);
 });
