@@ -1,5 +1,6 @@
 const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
 const TelegramBot = require("node-telegram-bot-api");
+const MVP_THREAD_ID = "1517651089002987600";
 const { createClient } = require("@supabase/supabase-js");
 const axios = require("axios");
 
@@ -155,7 +156,70 @@ async function translateTextLibre(text, targetLang = "uk") {
     return null;
   }
 }
+async function getDailyMVP() {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
+  const { data, error } = await supabase
+    .from("snapshots")
+    .select("*")
+    .gte("taken_at", since);
+
+  if (error) return [];
+
+  const map = new Map();
+
+  for (const row of data) {
+    if (!map.has(row.discord_id)) {
+      map.set(row.discord_id, {
+        name: row.game_name,
+        kills: 0,
+        wins: 0,
+        ebal: 0
+      });
+    }
+
+    const p = map.get(row.discord_id);
+    p.kills += row.kills;
+    p.wins += row.wins;
+    p.ebal += row.ebal;
+  }
+
+  return [...map.values()]
+    .sort((a, b) => b.ebal - a.ebal)
+    .slice(0, 10);
+}
+async function getWeeklyMVP() {
+  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data, error } = await supabase
+    .from("snapshots")
+    .select("*")
+    .gte("taken_at", since);
+
+  if (error) return [];
+
+  const map = new Map();
+
+  for (const row of data) {
+    if (!map.has(row.discord_id)) {
+      map.set(row.discord_id, {
+        name: row.game_name,
+        kills: 0,
+        wins: 0,
+        ebal: 0
+      });
+    }
+
+    const p = map.get(row.discord_id);
+    p.kills += row.kills;
+    p.wins += row.wins;
+    p.ebal += row.ebal;
+  }
+
+  return [...map.values()]
+    .sort((a, b) => b.ebal - a.ebal)
+    .slice(0, 20);
+}
 // ================ PERMISSIONS ================
 function hasAdminPermission(member) {
   if (!member) return false;
@@ -254,8 +318,36 @@ const client = new Client({
 
 client.once("ready", () => {
   console.log(`Discord logged in as ${client.user.tag}`);
+
+  // Снапшоти щогодини
   setInterval(() => takeSnapshot(), 60 * 60 * 1000);
+
+  // Перший снапшот через 10 сек після запуску
   setTimeout(() => takeSnapshot(), 10000);
+
+  // Щоденний MVP
+setInterval(async () => {
+  try {
+
+    const top = await getDailyMVP();
+    if (!top.length) return;
+
+    const thread = await client.channels.fetch(MVP_THREAD_ID);
+
+    let text = "🔥 DAILY MVP TOP 10\n\n";
+
+    top.forEach((p, i) => {
+      text += `#${i + 1} ${p.name} | ELO: ${p.ebal}\n`;
+    });
+
+    await thread.send(text);
+
+  } catch (err) {
+    console.error("Daily MVP error:", err);
+  }
+
+}, 24 * 60 * 60 * 1000);
+
 });
 
 client.on("messageCreate", async (message) => {
@@ -309,8 +401,18 @@ if (content === "!snapshot") {
     }
 
     if (!found) return message.reply("❌ Такий PUBG нік не знайдено. Перевір написання.");
+    
+    const { data: existingPlayer } = await supabase
+  .from("players")
+  .select("discord_id")
+  .eq("discord_id", message.author.id)
+  .single();
 
-    const { error } = await supabase.from("players").upsert({
+if (existingPlayer) {
+  return message.reply("❌ Ти вже зареєстрований.");
+}
+
+    const { error } = await supabase.from("players").insert({
       discord_id:   message.author.id,
       discord_name: message.author.username,
       game_name:    gameName,
@@ -354,6 +456,32 @@ if (content === "!snapshot") {
     customMatchFormat = format;
     return message.channel.send(`Custom match format set to ${format === 1 ? "solo" : `${format} players per team`}.`);
   }
+  if (content === "!mvp") {
+  const top = await getDailyMVP();
+
+  if (!top.length) return message.reply("No MVP data today.");
+
+  let text = "🔥 DAILY MVP TOP 10\n\n";
+
+  top.forEach((p, i) => {
+    text += `#${i + 1} ${p.name} | ELO: ${p.ebal}\n`;
+  });
+
+  return message.channel.send(text);
+}
+  if (content === "!mvpw") {
+  const top = await getWeeklyMVP();
+
+  if (!top.length) return message.reply("No MVP data this week.");
+
+  let text = "🏆 WEEKLY MVP TOP 20\n\n";
+
+  top.forEach((p, i) => {
+    text += `#${i + 1} ${p.name} | ELO: ${p.ebal}\n`;
+  });
+
+  return message.channel.send(text);
+}
 
   // !openreg
   if (content === "!openreg") {
