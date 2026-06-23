@@ -447,7 +447,21 @@ client.once("ready", () => {
 });
 
 client.on("messageCreate", async (message) => {
-  if (message.author.bot) return;
+  try {
+    if (message.author.bot) return;
+
+    const content = message.content.trim();
+    const member = message.member;
+
+    console.log("CMD:", content);
+
+    // ===== TEST =====
+    if (content === "!ping") {
+      return message.channel.send("pong");
+    }
+
+    // ВСІ ТВОЇ КОМАНДИ ТУТ ↓
+
 
   // Переклад каналу подій
   if (message.channel.id === PUBG_EVENTS_CHANNEL_ID) {
