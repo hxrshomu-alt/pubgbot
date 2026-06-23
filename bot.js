@@ -251,31 +251,38 @@ async function getStats(name) {
 
   for (const platform of platforms) {
     try {
-      const playerRes = await apiGet(
-        `https://api.pubg.com/shards/${platform}/players?filter[playerNames]=${encodeURIComponent(name)}`
-      );
+  const playerRes = await apiGet(
+    `https://api.pubg.com/shards/${platform}/players?filter[playerNames]=${encodeURIComponent(name)}`
+  );
 
-      const player = playerRes.data?.data?.[0];
-      if (!player) continue;
+  const player = playerRes.data?.data?.[0];
+  if (!player) continue;
 
-      const statsRes = await apiGet(
-        `https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/lifetime`
-      );
+  const statsRes = await apiGet(
+    `https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/lifetime`
+  );
 
-      const modes = statsRes.data?.data?.attributes?.gameModeStats;
-      if (!modes) continue;
+  const modes = statsRes.data?.data?.attributes?.gameModeStats;
+  if (!modes) continue;
 
-      let kills = 0, wins = 0, matches = 0;
-      for (const m in modes) {
-        kills   += modes[m].kills       || 0;
-        wins    += modes[m].wins        || 0;
-        matches += modes[m].roundsPlayed || 0;
-      }
+  let kills = 0, wins = 0, matches = 0;
+  for (const m in modes) {
+    kills   += modes[m].kills || 0;
+    wins    += modes[m].wins || 0;
+    matches += modes[m].roundsPlayed || 0;
+  }
 
-      const kd   = kills / (matches || 1);
-      const rate = Math.round((kills * 1.2 + wins * 15 + kd * 10) / (matches || 1));
+  const kd = kills / (matches || 1);
+  const rate = Math.round((kills * 1.2 + wins * 15 + kd * 10) / (matches || 1));
 
-      let tier = "Unranked", subTier = "", rankPoints = 0;
+  let tier = "Unranked", subTier = "", rankPoints = 0;
+
+  // ... твій ranked блок
+
+} catch (e) {
+  console.error("getStats error:", e.message);
+  continue;
+}
 
       try {
         const seasonId   = await getCurrentSeason(platform);
