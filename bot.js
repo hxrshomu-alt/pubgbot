@@ -449,10 +449,6 @@ client.once("ready", () => {
 client.on("messageCreate", async (message) => {
   try {
     if (message.author.bot) return;
-
-    const content = message.content.trim();
-    const member = message.member;
-
     console.log("CMD:", content);
 
     // ===== TEST =====
