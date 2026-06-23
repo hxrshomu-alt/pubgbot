@@ -162,29 +162,48 @@ async function getDailyMVP() {
   const { data, error } = await supabase
     .from("snapshots")
     .select("*")
-    .gte("taken_at", since);
+    .gte("created_at", since)
+    .order("created_at", { ascending: true });
 
-  if (error) return [];
+  if (error || !data.length) return [];
 
-  const map = new Map();
+  const players = new Map();
 
   for (const row of data) {
-    if (!map.has(row.discord_id)) {
-      map.set(row.discord_id, {
+    if (!players.has(row.discord_id)) {
+      players.set(row.discord_id, {
         name: row.game_name,
-        kills: 0,
-        wins: 0,
-        ebal: 0
+        first: row,
+        last: row
       });
+    } else {
+      players.get(row.discord_id).last = row;
     }
-
-    const p = map.get(row.discord_id);
-    p.kills += row.kills;
-    p.wins += row.wins;
-    p.ebal += row.ebal;
   }
 
-  return [...map.values()]
+  const result = [];
+
+  for (const p of players.values()) {
+    const killsDiff = p.last.kills - p.first.kills;
+    const winsDiff = p.last.wins - p.first.wins;
+    const damageDiff = p.last.damage - p.first.damage;
+    const matchesDiff = p.last.matches - p.first.matches;
+
+    const ebal =
+      killsDiff * 2 +
+      Math.floor(damageDiff / 100) * 2 +
+      matchesDiff +
+      winsDiff * 10;
+
+    result.push({
+      name: p.name,
+      kills: killsDiff,
+      wins: winsDiff,
+      ebal
+    });
+  }
+
+  return result
     .sort((a, b) => b.ebal - a.ebal)
     .slice(0, 10);
 }
