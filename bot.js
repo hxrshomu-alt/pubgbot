@@ -449,6 +449,10 @@ client.once("ready", () => {
 client.on("messageCreate", async (message) => {
   try {
     if (message.author.bot) return;
+
+    const content = message.content.trim();
+    const member  = message.member;
+
     console.log("CMD:", content);
 
     // ===== TEST =====
@@ -456,18 +460,13 @@ client.on("messageCreate", async (message) => {
       return message.channel.send("pong");
     }
 
-    // ВСІ ТВОЇ КОМАНДИ ТУТ ↓
+    // Переклад каналу подій
+    if (message.channel.id === PUBG_EVENTS_CHANNEL_ID) {
+      const translated = await translateTextLibre(message.content);
+      if (translated) await message.channel.send(`🇺🇦 Переклад:\n${translated}`);
+    }
 
-
-  // Переклад каналу подій
-  if (message.channel.id === PUBG_EVENTS_CHANNEL_ID) {
-    const translated = await translateTextLibre(message.content);
-    if (translated) await message.channel.send(`🇺🇦 Переклад:\n${translated}`);
-  }
-
-  const content = message.content.trim();
-  const member  = message.member;
-
+    // ВСІ КОМАНДИ ДАЛІ...
   // !stats
   if (content.startsWith("!stats")) {
     const name = content.split(" ")[1];
