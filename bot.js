@@ -327,44 +327,6 @@ async function handleStats(message, name) {
 
   msg.edit({ content: " ", embeds: [embed] });
 }
-if (content.startsWith("!mvpinfo")) {
-  const name = content.split(" ")[1];
-  if (!name) return message.reply("Use: !mvpinfo nickname");
-
-  const info = await getPlayerMVPBreakdown(name);
-
-  if (!info) return message.reply("❌ No data for this player");
-
-  const embed = new EmbedBuilder()
-    .setTitle(`📊 MVP BREAKDOWN: ${name}`)
-    .setColor(0x00bfff)
-    .addFields(
-      {
-        name: "📈 KILLS",
-        value: `${info.delta.kills}`,
-        inline: true
-      },
-      {
-        name: "🏆 WINS",
-        value: `${info.delta.wins}`,
-        inline: true
-      },
-      {
-        name: "💥 DAMAGE",
-        value: `${info.delta.damage}`,
-        inline: true
-      },
-      {
-        name: "🔥 ЄБАЛИ (MVP POINTS)",
-        value: `${info.delta.ebal}`,
-        inline: false
-      }
-    )
-    .setFooter({ text: "Last 24h performance" })
-    .setTimestamp();
-
-  return message.channel.send({ embeds: [embed] });
-}
 
 // ================ MVP SNAPSHOT ================
 async function takeSnapshot() {
@@ -490,6 +452,45 @@ if (content === "!snapshot") {
     console.error("Manual snapshot error:", err);
     return message.channel.send("❌ Snapshot failed. Check logs.");
   }
+}
+  if (content.startsWith("!mvpinfo")) {
+  const name = content.split(" ")[1];
+  if (!name) return message.reply("Use: !mvpinfo nickname");
+
+  const info = await getPlayerMVPBreakdown(name);
+
+  if (!info) return message.reply("❌ No data for this player (last 24h)");
+
+  const embed = new EmbedBuilder()
+    .setTitle(`📊 MVP BREAKDOWN`)
+    .setDescription(`👤 **${name}**`)
+    .setColor(0x00bfff)
+    .addFields(
+      {
+        name: "🔫 KILLS (Δ)",
+        value: `${info.delta.kills}`,
+        inline: true
+      },
+      {
+        name: "🏆 WINS (Δ)",
+        value: `${info.delta.wins}`,
+        inline: true
+      },
+      {
+        name: "💥 DAMAGE (Δ)",
+        value: `${info.delta.damage}`,
+        inline: true
+      },
+      {
+        name: "🔥 ЄБАЛИ (Δ)",
+        value: `${info.delta.ebal}`,
+        inline: false
+      }
+    )
+    .setFooter({ text: "Last 24h performance breakdown" })
+    .setTimestamp();
+
+  return message.channel.send({ embeds: [embed] });
 }
   // !skipua — реєстрація в базі
   if (content.startsWith("!skipua")) {
