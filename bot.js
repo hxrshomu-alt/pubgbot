@@ -213,29 +213,48 @@ async function getWeeklyMVP() {
   const { data, error } = await supabase
     .from("snapshots")
     .select("*")
-    .gte("taken_at", since);
+    .gte("taken_at", since)
+    .order("taken_at", { ascending: true });
 
-  if (error) return [];
+  if (error || !data.length) return [];
 
-  const map = new Map();
+  const players = new Map();
 
   for (const row of data) {
-    if (!map.has(row.discord_id)) {
-      map.set(row.discord_id, {
+    if (!players.has(row.discord_id)) {
+      players.set(row.discord_id, {
         name: row.game_name,
-        kills: 0,
-        wins: 0,
-        ebal: 0
+        first: row,
+        last: row
       });
+    } else {
+      players.get(row.discord_id).last = row;
     }
-
-    const p = map.get(row.discord_id);
-    p.kills += row.kills;
-    p.wins += row.wins;
-    p.ebal += row.ebal;
   }
 
-  return [...map.values()]
+  const result = [];
+
+  for (const p of players.values()) {
+    const killsDiff = p.last.kills - p.first.kills;
+    const winsDiff = p.last.wins - p.first.wins;
+    const damageDiff = p.last.damage - p.first.damage;
+    const matchesDiff = p.last.matches - p.first.matches;
+
+    const ebal =
+      killsDiff * 2 +
+      Math.floor(damageDiff / 100) * 2 +
+      matchesDiff +
+      winsDiff * 10;
+
+    result.push({
+      name: p.name,
+      kills: killsDiff,
+      wins: winsDiff,
+      ebal
+    });
+  }
+
+  return result
     .sort((a, b) => b.ebal - a.ebal)
     .slice(0, 20);
 }
@@ -356,7 +375,7 @@ setInterval(async () => {
     let text = "🔥 DAILY MVP TOP 10\n\n";
 
     top.forEach((p, i) => {
-      text += `#${i + 1} ${p.name} | ELO: ${p.ebal}\n`;
+      text += `#${i + 1} ${p.name} | єБали: ${p.ebal}\n`;
     });
 
     await thread.send(text);
@@ -480,11 +499,19 @@ if (existingPlayer) {
 
   if (!top.length) return message.reply("No MVP data today.");
 
-  let text = "🔥 DAILY MVP TOP 10\n\n";
+  let text = "🔥 **ЩОДЕННИЙ MVP ТОП-10** 🔥\n\n";
 
-  top.forEach((p, i) => {
-    text += `#${i + 1} ${p.name} | ELO: ${p.ebal}\n`;
-  });
+top.forEach((p, i) => {
+  let medal = "🏅";
+
+  if (i === 0) medal = "🥇";
+  else if (i === 1) medal = "🥈";
+  else if (i === 2) medal = "🥉";
+
+  text += `${medal} **#${i + 1} ${p.name}** — ${p.ebal} єБалів\n`;
+});
+
+text += "\n⚡ єБали нараховуються за активність у PUBG\n🏆 Наприкінці сезону найактивніші гравці братимуть участь у розіграшах G-Coin";
 
   return message.channel.send(text);
 }
@@ -493,11 +520,23 @@ if (existingPlayer) {
 
   if (!top.length) return message.reply("No MVP data this week.");
 
-  let text = "🏆 WEEKLY MVP TOP 20\n\n";
+  let text = "🏆 **ТИЖНЕВИЙ РЕЙТИНГ SKIP UA** 🏆\n";
+  text += "━━━━━━━━━━━━━━━━━━━━━━\n\n";
 
   top.forEach((p, i) => {
-    text += `#${i + 1} ${p.name} | ELO: ${p.ebal}\n`;
+    let medal = "🏅";
+
+    if (i === 0) medal = "🥇";
+    else if (i === 1) medal = "🥈";
+    else if (i === 2) medal = "🥉";
+
+    text += `${medal} **#${i + 1} ${p.name}** — ${p.ebal} єБалів\n`;
   });
+
+  text += "\n━━━━━━━━━━━━━━━━━━━━━━\n";
+  text += "⚡ Рейтинг формується за активністю за 7 днів\n";
+  text += "🎯 Найактивніші гравці отримують пріоритет у івентах та розіграшах G-Coin\n";
+  text += "🔥 SKIP UA COMMUNITY";
 
   return message.channel.send(text);
 }
