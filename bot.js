@@ -367,7 +367,7 @@ async function takeSnapshot() {
         .from("snapshots")
         .delete()
         .eq("discord_id", player.discord_id)
-        .lt("taken_at", cutoff);
+        .lt("created_at", cutoff)
 
     } catch (e) {
       console.error("Snapshot error for", player.game_name, e.message);
