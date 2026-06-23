@@ -57,6 +57,38 @@ async function apiGet(url, retry = 1) {
     throw err;
   }
 }
+async function getPlayerMVPBreakdown(name) {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+  const { data, error } = await supabase
+    .from("snapshots")
+    .select("*")
+    .eq("game_name", name)
+    .gte("created_at", since)
+    .order("created_at", { ascending: true });
+
+  if (error || !data?.length) return null;
+
+  let start = data[0];
+  let end = data[data.length - 1];
+
+  const deltaKills = end.kills - start.kills;
+  const deltaWins = end.wins - start.wins;
+  const deltaDamage = end.damage - start.damage;
+  const deltaEbal = end.ebal - start.ebal;
+
+  return {
+    name,
+    start,
+    end,
+    delta: {
+      kills: deltaKills,
+      wins: deltaWins,
+      damage: deltaDamage,
+      ebal: deltaEbal
+    }
+  };
+}
 
 async function getCurrentSeason(platform) {
   if (seasonCache.has(platform)) return seasonCache.get(platform);
@@ -294,6 +326,44 @@ async function handleStats(message, name) {
     .setTimestamp();
 
   msg.edit({ content: " ", embeds: [embed] });
+}
+if (content.startsWith("!mvpinfo")) {
+  const name = content.split(" ")[1];
+  if (!name) return message.reply("Use: !mvpinfo nickname");
+
+  const info = await getPlayerMVPBreakdown(name);
+
+  if (!info) return message.reply("❌ No data for this player");
+
+  const embed = new EmbedBuilder()
+    .setTitle(`📊 MVP BREAKDOWN: ${name}`)
+    .setColor(0x00bfff)
+    .addFields(
+      {
+        name: "📈 KILLS",
+        value: `${info.delta.kills}`,
+        inline: true
+      },
+      {
+        name: "🏆 WINS",
+        value: `${info.delta.wins}`,
+        inline: true
+      },
+      {
+        name: "💥 DAMAGE",
+        value: `${info.delta.damage}`,
+        inline: true
+      },
+      {
+        name: "🔥 ЄБАЛИ (MVP POINTS)",
+        value: `${info.delta.ebal}`,
+        inline: false
+      }
+    )
+    .setFooter({ text: "Last 24h performance" })
+    .setTimestamp();
+
+  return message.channel.send({ embeds: [embed] });
 }
 
 // ================ MVP SNAPSHOT ================
