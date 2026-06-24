@@ -473,7 +473,7 @@ client.once("ready", async () => {
 
   // Перший snapshot через 15 сек після старту
   setTimeout(() => takeSnapshot(), 15000);
-  setInterval(() => takeSnapshot(), 60 * 60 * 1000);
+  setInterval(() => takeSnapshot(), 4 * 60 * 60 * 1000);
 
   scheduleDailyMVP(client);
   scheduleWeeklyMVP(client);
