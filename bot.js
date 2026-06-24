@@ -434,11 +434,12 @@ async function takeSnapshot() {
 
     await sleep(400); // 👈 важливо щоб не ловити 429
 
-  } catch (err) {
-    console.log(`❌ Snapshot skip player ${player.game_name}`, err.message);
-    continue; // 👈 НЕ ЛАМАТИ ВСІЙ СНАПШОТ
-  }
-}
+     } catch (err) {
+      console.log(`❌ Snapshot skip player ${player.game_name}`, err.message);
+      continue;
+    }
+  } 
+}  
 
 // ================ DISCORD ================
 const client = new Client({
