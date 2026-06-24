@@ -21,11 +21,43 @@ const CACHE_TIME = 5 * 60 * 1000;
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+// ================ API QUEUE ================
+// FIX: глобальна черга для всіх API-запитів — гарантує що запити йдуть
+// строго по одному, незалежно від того скільки функцій викликають apiGet
+let apiQueue = Promise.resolve();
+
+function queuedApiGet(url, retry = 2) {
+  apiQueue = apiQueue.then(() => apiGet(url, retry));
+  return apiQueue;
+}
+
+async function apiGet(url, retry = 2) {
+  try {
+    await sleep(1300); // затримка між запитами
+    return await axios.get(url, {
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+        Accept: "application/vnd.api+json"
+      }
+    });
+  } catch (err) {
+    if (err.response?.status === 429 && retry > 0) {
+      console.warn(`429 — чекаємо 8 сек, retry залишилось: ${retry - 1}`);
+      await sleep(8000);
+      return apiGet(url, retry - 1);
+    }
+    throw err;
+  }
+}
+
 // ================ GLOBALS ================
 let registeredPlayers = new Set();
 let registrationOpen = false;
 let customMatchFormat = null;
 let lastTeamSize = null;
+
+// FIX: прапор щоб не запускати два snapshot одночасно
+let snapshotRunning = false;
 
 const maps = [
   "Taego", "Erangel", "Miramar", "Paramo", "Sanhok",
@@ -54,7 +86,6 @@ function getWeekRange() {
   return { start, end };
 }
 
-// Перемішує масив in-place (модифікує оригінал)
 function shuffle(array) {
   for (let i = array.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -62,7 +93,7 @@ function shuffle(array) {
   }
 }
 
-// ================ MVP (об'єднана функція) ================
+// ================ MVP ================
 async function getMVP(range, limit = 10) {
   const { start, end } = range;
 
@@ -112,17 +143,20 @@ function scheduleDailyMVP(client) {
   const now  = new Date();
   const next = new Date();
   next.setHours(23, 59, 0, 0);
-
   if (next <= now) next.setDate(next.getDate() + 1);
 
   const delay = next - now;
 
   setTimeout(async () => {
-    const top     = await getDailyMVP();
-    const channel = await client.channels.fetch(MVP_THREAD_ID);
-    let text = "🔥 DAILY MVP TOP 10\n\n";
-    top.forEach((p, i) => { text += `#${i + 1} ${p.name} — ${p.ebal} єБалів\n`; });
-    channel.send(text);
+    try {
+      const top     = await getDailyMVP();
+      const channel = await client.channels.fetch(MVP_THREAD_ID);
+      let text = "🔥 DAILY MVP TOP 10\n\n";
+      top.forEach((p, i) => { text += `#${i + 1} ${p.name} — ${p.ebal} єБалів\n`; });
+      if (top.length) await channel.send(text);
+    } catch (e) {
+      console.error("scheduleDailyMVP error:", e.message);
+    }
     scheduleDailyMVP(client);
   }, delay);
 }
@@ -130,45 +164,29 @@ function scheduleDailyMVP(client) {
 function scheduleWeeklyMVP(client) {
   const now  = new Date();
   const next = new Date();
-
   const day  = now.getDay();
-  let diff = (1 + 7 - day) % 7;
+  let diff   = (1 + 7 - day) % 7;
   if (diff === 0 && now.getHours() >= 12) diff = 7;
-
   next.setDate(now.getDate() + diff);
   next.setHours(12, 0, 0, 0);
 
   const delay = next - now;
 
   setTimeout(async () => {
-    const top     = await getWeeklyMVP();
-    const channel = await client.channels.fetch(MVP_THREAD_ID);
-    let text = "🏆 WEEKLY MVP TOP\n\n";
-    top.forEach((p, i) => { text += `#${i + 1} ${p.name} — ${p.ebal} єБалів\n`; });
-    channel.send(text);
+    try {
+      const top     = await getWeeklyMVP();
+      const channel = await client.channels.fetch(MVP_THREAD_ID);
+      let text = "🏆 WEEKLY MVP TOP\n\n";
+      top.forEach((p, i) => { text += `#${i + 1} ${p.name} — ${p.ebal} єБалів\n`; });
+      if (top.length) await channel.send(text);
+    } catch (e) {
+      console.error("scheduleWeeklyMVP error:", e.message);
+    }
     scheduleWeeklyMVP(client);
   }, delay);
 }
 
-// ================ PUBG API ================
-async function apiGet(url, retry = 1) {
-  try {
-    await sleep(1200);
-    return await axios.get(url, {
-      headers: {
-        Authorization: `Bearer ${API_KEY}`,
-        Accept: "application/vnd.api+json"
-      }
-    });
-  } catch (err) {
-    if (err.response?.status === 429 && retry > 0) {
-      await sleep(5000);
-      return apiGet(url, retry - 1);
-    }
-    throw err;
-  }
-}
-
+// ================ PUBG API HELPERS ================
 async function getPlayerMVPBreakdown(name) {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
@@ -196,45 +214,40 @@ async function getPlayerMVPBreakdown(name) {
     Math.floor(deltaMatches / 2);
 
   return {
-    name,
-    start,
-    end,
-    delta: {
-      kills:  deltaKills,
-      wins:   deltaWins,
-      damage: deltaDamage,
-      ebal:   deltaEbal
-    }
+    name, start, end,
+    delta: { kills: deltaKills, wins: deltaWins, damage: deltaDamage, ebal: deltaEbal }
   };
 }
 
 async function getCurrentSeason(platform) {
   if (seasonCache.has(platform)) return seasonCache.get(platform);
-  const res = await apiGet(`https://api.pubg.com/shards/${platform}/seasons`);
+  const res = await queuedApiGet(`https://api.pubg.com/shards/${platform}/seasons`);
   const season = res.data.data.find(s => s.attributes.isCurrentSeason);
   seasonCache.set(platform, season.id);
   return season.id;
 }
 
-// FIX: відновлено єдиний цілісний try/catch на платформу —
-// ranked блок знаходиться всередині того самого try, де оголошені player/modes/tier
-async function getStats(name, platform) {
-  const cached = cache.get(name);
+// FIX: використовуємо queuedApiGet замість apiGet — всі запити через одну чергу
+// FIX: параметр platform дозволяє пропускати зайву платформу якщо вже відома
+async function getStats(name, knownPlatform = null) {
+  const cacheKey = name + (knownPlatform || "");
+  const cached = cache.get(cacheKey);
   if (cached && Date.now() - cached.time < CACHE_TIME) return cached.data;
 
-  const platforms = platform ? [platform] : ["psn", "xbox"];
+  // якщо платформа відома — перевіряємо лише її, не витрачаємо запити на іншу
+  const platforms = knownPlatform ? [knownPlatform] : ["psn", "xbox"];
   let best = null;
 
   for (const platform of platforms) {
     try {
-      const playerRes = await apiGet(
+      const playerRes = await queuedApiGet(
         `https://api.pubg.com/shards/${platform}/players?filter[playerNames]=${encodeURIComponent(name)}`
       );
 
       const player = playerRes.data?.data?.[0];
       if (!player) continue;
 
-      const statsRes = await apiGet(
+      const statsRes = await queuedApiGet(
         `https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/lifetime`
       );
 
@@ -253,18 +266,17 @@ async function getStats(name, platform) {
 
       let tier = "Unranked", subTier = "", rankPoints = 0;
 
-      // Ranked блок — всередині того самого try (має доступ до player)
       try {
-        const seasonId    = await getCurrentSeason(platform);
-        const rankedRes   = await apiGet(
+        const seasonId  = await getCurrentSeason(platform);
+        const rankedRes = await queuedApiGet(
           `https://api.pubg.com/shards/${platform}/players/${player.id}/seasons/${seasonId}/ranked`
         );
         const rankedStats = rankedRes.data?.data?.attributes?.rankedGameModeStats;
         if (rankedStats) {
-          const bestMode = Object.values(rankedStats).reduce((best, cur) => {
-            if (!cur?.currentTier) return best;
-            if (!best) return cur;
-            return (cur.currentRankPoint || 0) > (best.currentRankPoint || 0) ? cur : best;
+          const bestMode = Object.values(rankedStats).reduce((b, cur) => {
+            if (!cur?.currentTier) return b;
+            if (!b) return cur;
+            return (cur.currentRankPoint || 0) > (b.currentRankPoint || 0) ? cur : b;
           }, null);
           if (bestMode?.currentTier) {
             tier       = bestMode.currentTier.tier    || "Unranked";
@@ -277,25 +289,19 @@ async function getStats(name, platform) {
       }
 
       const result = {
-        kills,
-        wins,
-        matches,
+        kills, wins, matches,
         damage: Object.values(modes).reduce((sum, m) => sum + (m.damageDealt || 0), 0),
-        platform,
-        rate,
-        tier,
-        subTier,
-        rankPoints
+        platform, rate, tier, subTier, rankPoints
       };
 
       if (!best || result.kills > best.kills) best = result;
 
     } catch (e) {
-      console.error("getStats error for platform", platform, e.message);
+      console.error(`getStats error for platform ${platform}:`, e.message);
     }
   }
 
-  if (best) cache.set(name, { data: best, time: Date.now() });
+  if (best) cache.set(cacheKey, { data: best, time: Date.now() });
   return best;
 }
 
@@ -303,10 +309,7 @@ async function getStats(name, platform) {
 async function translateTextLibre(text, targetLang = "uk") {
   try {
     const res = await axios.post("https://libretranslate.de/translate", {
-      q: text,
-      source: "en",
-      target: targetLang,
-      format: "text"
+      q: text, source: "en", target: targetLang, format: "text"
     }, { headers: { "Content-Type": "application/json" } });
     return res.data.translatedText;
   } catch (error) {
@@ -352,94 +355,109 @@ async function handleStats(message, name) {
 
   msg.edit({ content: " ", embeds: [embed] });
 }
+
+// ================ UPDATE PLATFORMS ================
+// Запускається один раз при старті — визначає платформу для гравців у яких її немає
 async function updatePlayersPlatform() {
   const { data: players, error } = await supabase
     .from("players")
-    .select("*");
+    .select("*")
+    .is("platform", null); // FIX: беремо тільки тих у кого platform = null
 
-  if (error) {
-    console.error(error);
-    return;
-  }
+  if (error) { console.error("updatePlayersPlatform error:", error); return; }
+  if (!players?.length) { console.log("✅ Всі платформи вже визначені"); return; }
+
+  console.log(`🔍 Визначаємо платформу для ${players.length} гравців...`);
 
   for (const player of players) {
-
-    // якщо платформа вже є — пропускаємо
-    if (player.platform) continue;
-
     let foundPlatform = null;
 
     for (const platform of ["psn", "xbox"]) {
-
       try {
-
-        const res = await apiGet(
+        const res = await queuedApiGet(
           `https://api.pubg.com/shards/${platform}/players?filter[playerNames]=${encodeURIComponent(player.game_name)}`
         );
-
-        if (res.data?.data?.length > 0) {
-          foundPlatform = platform;
-          break;
-        }
-
+        if (res.data?.data?.length > 0) { foundPlatform = platform; break; }
       } catch (e) {}
-
     }
 
     if (foundPlatform) {
-
       await supabase
         .from("players")
         .update({ platform: foundPlatform })
         .eq("discord_id", player.discord_id);
-
-      console.log(`${player.game_name} -> ${foundPlatform}`);
+      console.log(`✅ ${player.game_name} → ${foundPlatform}`);
+    } else {
+      console.warn(`⚠️ Платформу не знайдено для ${player.game_name}`);
     }
-
-    await sleep(1000);
   }
 
   console.log("✅ Platforms updated");
 }
+
 // ================ MVP SNAPSHOT ================
 async function takeSnapshot() {
-  const { data: players, error } = await supabase.from("players").select("*");
-  if (error) return console.error("Snapshot fetch players error:", error);
+  // FIX: захист від паралельного запуску (наприклад !snapshot + setInterval одночасно)
+  if (snapshotRunning) {
+    console.log("⏳ Snapshot вже виконується, пропускаємо");
+    return;
+  }
+  snapshotRunning = true;
 
-  for (const player of players) {
   try {
-    const stats = await getStats(player.game_name, player.platform);
-    if (!stats) continue;
+    const { data: players, error } = await supabase.from("players").select("*");
+    if (error) { console.error("Snapshot fetch players error:", error); return; }
 
-    const kills   = stats.kills || 0;
-    const wins    = stats.wins || 0;
-    const matches = stats.matches || 0;
-    const damage  = Math.floor(Number(stats.damage || 0));
+    console.log(`📸 Починаємо snapshot для ${players.length} гравців...`);
 
-    const eBal =
-      kills * 1 +
-      Math.floor(damage / 200) * 1 +
-      wins * 20 +
-      Math.floor(matches / 2);
+    for (const player of players) {
+      try {
+        // FIX: передаємо platform гравця — пропускає зайву платформу і вдвічі менше запитів
+        const stats = await getStats(player.game_name, player.platform || null);
+        if (!stats) {
+          console.warn(`⚠️ Немає статів для ${player.game_name}`);
+          continue;
+        }
 
-    await supabase.from("snapshots").insert({
-      discord_id: player.discord_id,
-      game_name: player.game_name,
-      kills,
-      wins,
-      matches,
-      damage,
-      ebal: Math.floor(eBal)
-    });
+        const kills   = stats.kills   || 0;
+        const wins    = stats.wins    || 0;
+        const matches = stats.matches || 0;
+        const damage  = Math.floor(Number(stats.damage || 0));
 
-    await sleep(400); // 👈 важливо щоб не ловити 429
+        const eBal =
+          kills * 1 +
+          Math.floor(damage / 200) * 1 +
+          wins * 20 +
+          Math.floor(matches / 2);
 
-     } catch (err) {
-      console.log(`❌ Snapshot skip player ${player.game_name}`, err.message);
-      continue;
+        const { error: insertError } = await supabase.from("snapshots").insert({
+          discord_id: player.discord_id,
+          game_name:  player.game_name,
+          kills, wins, matches, damage,
+          ebal: Math.floor(eBal)
+        });
+
+        if (insertError) console.error("Snapshot insert error:", insertError);
+
+        // FIX: видалення старих знімків повернуто — без цього таблиця росте безкінечно
+        const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+        await supabase
+          .from("snapshots")
+          .delete()
+          .eq("discord_id", player.discord_id)
+          .lt("created_at", cutoff);
+
+      } catch (e) {
+        console.error(`❌ Snapshot skip ${player.game_name}:`, e.message);
+      }
     }
-  } 
-}  
+
+    console.log("✅ Snapshots taken");
+  } finally {
+    // FIX: знімаємо прапор навіть якщо була помилка
+    snapshotRunning = false;
+  }
+}
 
 // ================ DISCORD ================
 const client = new Client({
@@ -453,17 +471,20 @@ const client = new Client({
 client.once("ready", async () => {
   console.log(`Discord logged in as ${client.user.tag}`);
 
+  // FIX: updatePlayersPlatform запускається першою і чекає завершення
+  // перед тим як стартувати snapshot — уникаємо race condition між ними
   await updatePlayersPlatform();
 
+  // Перший snapshot через 15 сек після визначення платформ
+  setTimeout(() => takeSnapshot(), 15000);
+
+  // Снапшоти щогодини
   setInterval(() => takeSnapshot(), 60 * 60 * 1000);
-  setTimeout(() => takeSnapshot(), 10000);
 
   scheduleDailyMVP(client);
   scheduleWeeklyMVP(client);
 });
 
-// FIX: прибрано незакритий try всередині messageCreate —
-// тепер весь обробник загорнутий в один try/catch правильно
 client.on("messageCreate", async (message) => {
   try {
     if (message.author.bot) return;
@@ -494,6 +515,7 @@ client.on("messageCreate", async (message) => {
     // !snapshot
     if (content === "!snapshot") {
       if (!hasAdminPermission(member)) return message.reply("❌ You don't have permission.");
+      if (snapshotRunning) return message.channel.send("⏳ Snapshot вже виконується.");
       message.channel.send("⏳ Running snapshot now...");
       try {
         await takeSnapshot();
@@ -541,26 +563,28 @@ client.on("messageCreate", async (message) => {
 
       if (existingPlayer) return message.reply("❌ Ти вже зареєстрований.");
 
-      const platforms = platform ? [platform] : ["psn", "xbox"];
+      // FIX: прибрано undefined змінну 'platform' — тепер правильно ["psn", "xbox"]
       let found = false;
-      for (const platform of platforms) {
+      let foundPlatform = null;
+      for (const plt of ["psn", "xbox"]) {
         try {
-          const res = await apiGet(
-            `https://api.pubg.com/shards/${platform}/players?filter[playerNames]=${encodeURIComponent(gameName)}`
+          const res = await queuedApiGet(
+            `https://api.pubg.com/shards/${plt}/players?filter[playerNames]=${encodeURIComponent(gameName)}`
           );
-          if (res.data?.data?.length > 0) { found = true; break; }
+          if (res.data?.data?.length > 0) { found = true; foundPlatform = plt; break; }
         } catch (e) {}
       }
 
       if (!found) return message.reply("❌ Такий PUBG нік не знайдено. Перевір написання.");
 
+      // FIX: зберігаємо платформу одразу при реєстрації — менше роботи для updatePlayersPlatform
       const { error } = await supabase.from("players").upsert({
-  discord_id: message.author.id,
-  discord_name: message.author.username,
-  game_name: gameName,
-  platform: null, // або "unknown" поки не визначено
-  registered_at: new Date().toISOString()
-}, { onConflict: "discord_id" });
+        discord_id:    message.author.id,
+        discord_name:  message.author.username,
+        game_name:     gameName,
+        platform:      foundPlatform,
+        registered_at: new Date().toISOString()
+      }, { onConflict: "discord_id" });
 
       if (error) {
         console.error("Supabase upsert error:", error);
@@ -580,6 +604,7 @@ client.on("messageCreate", async (message) => {
         .setDescription(
           `Вітаю, тебе успішно зареєстровано в базі учасників **SkipUA**.\n\n` +
           `🔹 Твій PUBG нік: **${gameName}**\n` +
+          `🔹 Платформа: **${foundPlatform.toUpperCase()}**\n` +
           `🔹 Статус: **Активний учасник**\n\n` +
           `🚀 Надалі ти зможеш отримати:\n` +
           `• Участь у кастомках\n• MVP систему\n• Лідерборди\n• Турніри та івенти`
@@ -606,10 +631,7 @@ client.on("messageCreate", async (message) => {
 
       let text = "🔥 **ЩОДЕННИЙ MVP ТОП-10** 🔥\n\n";
       top.forEach((p, i) => {
-        let medal = "🏅";
-        if (i === 0) medal = "🥇";
-        else if (i === 1) medal = "🥈";
-        else if (i === 2) medal = "🥉";
+        let medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "🏅";
         text += `${medal} **#${i + 1} ${p.name}** — ${p.ebal} єБалів\n`;
       });
       text += "\n⚡ єБали нараховуються за активність у PUBG\n🏆 Наприкінці сезону найактивніші гравці братимуть участь у розіграшах G-Coin";
@@ -625,10 +647,7 @@ client.on("messageCreate", async (message) => {
       let text = "🏆 **ТИЖНЕВИЙ РЕЙТИНГ SKIP UA** 🏆\n";
       text += "━━━━━━━━━━━━━━━━━━━━━━\n\n";
       top.forEach((p, i) => {
-        let medal = "🏅";
-        if (i === 0) medal = "🥇";
-        else if (i === 1) medal = "🥈";
-        else if (i === 2) medal = "🥉";
+        let medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "🏅";
         text += `${medal} **#${i + 1} ${p.name}** — ${p.ebal} єБалів\n`;
       });
       text += "\n━━━━━━━━━━━━━━━━━━━━━━\n";
@@ -756,12 +775,8 @@ client.on("messageCreate", async (message) => {
       if (!hasAdminPermission(member)) return message.reply("You don't have permission.");
 
       const event = {
-        title:    "SKIP UA CUSTOM MATCH",
-        date:     "Субота",
-        time:     "20:00",
-        timezone: "за київським часом",
-        game:     "PUBG Console",
-        formats:  "2x2 • 4x4 • Arcade 6x6"
+        title: "SKIP UA CUSTOM MATCH", date: "Субота", time: "20:00",
+        timezone: "за київським часом", game: "PUBG Console", formats: "2x2 • 4x4 • Arcade 6x6"
       };
 
       const embed = new EmbedBuilder()
@@ -816,7 +831,6 @@ ${event.formats}
         );
         response += "Solo mode match started! Players:\n" + memberNames.join("\n");
         matchData = { players: memberNames };
-
         await supabase.from("matches").insert({ format: "Solo", map: selectedMap, data: matchData });
         registeredPlayers.clear();
         return message.channel.send(response);
@@ -836,8 +850,7 @@ ${event.formats}
 
         await supabase.from("matches").insert({
           format: `${customMatchFormat}x${customMatchFormat}`,
-          map:    selectedMap,
-          data:   { teams }
+          map: selectedMap, data: { teams }
         });
 
         registeredPlayers.clear();
