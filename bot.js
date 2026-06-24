@@ -352,7 +352,55 @@ async function handleStats(message, name) {
 
   msg.edit({ content: " ", embeds: [embed] });
 }
+async function updatePlayersPlatform() {
+  const { data: players, error } = await supabase
+    .from("players")
+    .select("*");
 
+  if (error) {
+    console.error(error);
+    return;
+  }
+
+  for (const player of players) {
+
+    // якщо платформа вже є — пропускаємо
+    if (player.platform) continue;
+
+    let foundPlatform = null;
+
+    for (const platform of ["psn", "xbox"]) {
+
+      try {
+
+        const res = await apiGet(
+          `https://api.pubg.com/shards/${platform}/players?filter[playerNames]=${encodeURIComponent(player.game_name)}`
+        );
+
+        if (res.data?.data?.length > 0) {
+          foundPlatform = platform;
+          break;
+        }
+
+      } catch (e) {}
+
+    }
+
+    if (foundPlatform) {
+
+      await supabase
+        .from("players")
+        .update({ platform: foundPlatform })
+        .eq("discord_id", player.discord_id);
+
+      console.log(`${player.game_name} -> ${foundPlatform}`);
+    }
+
+    await sleep(1000);
+  }
+
+  console.log("✅ Platforms updated");
+}
 // ================ MVP SNAPSHOT ================
 async function takeSnapshot() {
   const { data: players, error } = await supabase.from("players").select("*");
@@ -414,6 +462,7 @@ const client = new Client({
 
 client.once("ready", () => {
   console.log(`Discord logged in as ${client.user.tag}`);
+  await updatePlayersPlatform();
   setInterval(() => takeSnapshot(), 60 * 60 * 1000);
   setTimeout(() => takeSnapshot(), 10000);
   scheduleDailyMVP(client);
