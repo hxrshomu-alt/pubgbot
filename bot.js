@@ -407,48 +407,37 @@ async function takeSnapshot() {
   if (error) return console.error("Snapshot fetch players error:", error);
 
   for (const player of players) {
-    try {
-      const stats = await getStats(player.game_name);
-      if (!stats) continue;
+  try {
+    const stats = await getStats(player.game_name, player.platform);
+    if (!stats) continue;
 
-      const kills   = stats.kills   || 0;
-      const wins    = stats.wins    || 0;
-      const matches = stats.matches || 0;
-      const damage  = Math.floor(Number(stats.damage || 0));
+    const kills   = stats.kills || 0;
+    const wins    = stats.wins || 0;
+    const matches = stats.matches || 0;
+    const damage  = Math.floor(Number(stats.damage || 0));
 
-      const eBal =
-        kills * 1 +
-        Math.floor(damage / 200) * 1 +
-        wins * 20 +
-        Math.floor(matches / 2);
+    const eBal =
+      kills * 1 +
+      Math.floor(damage / 200) * 1 +
+      wins * 20 +
+      Math.floor(matches / 2);
 
-      const { error: insertError } = await supabase.from("snapshots").insert({
-        discord_id: player.discord_id,
-        game_name:  player.game_name,
-        kills,
-        wins,
-        matches,
-        damage,
-        ebal: Math.floor(eBal)
-      });
+    await supabase.from("snapshots").insert({
+      discord_id: player.discord_id,
+      game_name: player.game_name,
+      kills,
+      wins,
+      matches,
+      damage,
+      ebal: Math.floor(eBal)
+    });
 
-      if (insertError) console.error("Snapshot insert error:", insertError);
+    await sleep(400); // 👈 важливо щоб не ловити 429
 
-      const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      await supabase
-        .from("snapshots")
-        .delete()
-        .eq("discord_id", player.discord_id)
-        .lt("created_at", cutoff);
-
-      await sleep(500);
-
-    } catch (e) {
-      console.error("Snapshot error for", player.game_name, e.message);
-    }
+  } catch (err) {
+    console.log(`❌ Snapshot skip player ${player.game_name}`, err.message);
+    continue; // 👈 НЕ ЛАМАТИ ВСІЙ СНАПШОТ
   }
-
-  console.log("✅ Snapshots taken");
 }
 
 // ================ DISCORD ================
