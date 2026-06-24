@@ -1,5 +1,4 @@
 const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
-const TelegramBot = require("node-telegram-bot-api");
 const MVP_THREAD_ID = "1517651089002987600";
 const { createClient } = require("@supabase/supabase-js");
 const axios = require("axios");
@@ -17,33 +16,38 @@ const API_KEY = process.env.PUBG_API_KEY;
 // ================ CACHE ================
 const cache = new Map();
 const seasonCache = new Map();
-const CACHE_TIME = 5 * 60 * 1000;
+const CACHE_TIME = 30 * 60 * 1000; // 30 хв — знижує кількість реальних запитів
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // ================ API QUEUE ================
-// FIX: глобальна черга для всіх API-запитів — гарантує що запити йдуть
-// строго по одному, незалежно від того скільки функцій викликають apiGet
+// Всі запити до PUBG API йдуть через одну послідовну чергу.
+// PUBG дозволяє ~10 запитів за хвилину на безкоштовному ключі.
+// Затримка 7 сек між запитами = ~8 запитів/хв — тримаємось в ліміті.
+const API_DELAY_MS = 7000;
 let apiQueue = Promise.resolve();
 
 function queuedApiGet(url, retry = 2) {
-  apiQueue = apiQueue.then(() => apiGet(url, retry));
-  return apiQueue;
+  const task = apiQueue.then(() => apiGet(url, retry));
+  // Наступний запит стартує не раніше ніж через API_DELAY_MS після поточного
+  apiQueue = task.then(() => sleep(API_DELAY_MS)).catch(() => sleep(API_DELAY_MS));
+  return task;
 }
 
 async function apiGet(url, retry = 2) {
   try {
-    await sleep(1300); // затримка між запитами
     return await axios.get(url, {
       headers: {
         Authorization: `Bearer ${API_KEY}`,
         Accept: "application/vnd.api+json"
-      }
+      },
+      timeout: 15000
     });
   } catch (err) {
     if (err.response?.status === 429 && retry > 0) {
-      console.warn(`429 — чекаємо 8 сек, retry залишилось: ${retry - 1}`);
-      await sleep(8000);
+      const wait = 60000; // при 429 чекаємо повну хвилину
+      console.warn(`⚠️ 429 rate limit — чекаємо ${wait / 1000}с, retry: ${retry - 1}`);
+      await sleep(wait);
       return apiGet(url, retry - 1);
     }
     throw err;
@@ -55,8 +59,6 @@ let registeredPlayers = new Set();
 let registrationOpen = false;
 let customMatchFormat = null;
 let lastTeamSize = null;
-
-// FIX: прапор щоб не запускати два snapshot одночасно
 let snapshotRunning = false;
 
 const maps = [
@@ -66,10 +68,8 @@ const maps = [
 
 function getTodayRange() {
   const now = new Date();
-  const start = new Date(now);
-  start.setHours(0, 1, 0, 0);
-  const end = new Date(now);
-  end.setHours(23, 59, 59, 999);
+  const start = new Date(now); start.setHours(0, 1, 0, 0);
+  const end   = new Date(now); end.setHours(23, 59, 59, 999);
   return { start, end };
 }
 
@@ -106,7 +106,6 @@ async function getMVP(range, limit = 10) {
   if (error || !data?.length) return [];
 
   const players = new Map();
-
   for (const row of data) {
     if (!players.has(row.discord_id)) {
       players.set(row.discord_id, { name: row.game_name, first: row, last: row });
@@ -116,7 +115,6 @@ async function getMVP(range, limit = 10) {
   }
 
   const result = [];
-
   for (const p of players.values()) {
     const killsDiff   = p.last.kills   - p.first.kills;
     const winsDiff    = p.last.wins    - p.first.wins;
@@ -145,8 +143,6 @@ function scheduleDailyMVP(client) {
   next.setHours(23, 59, 0, 0);
   if (next <= now) next.setDate(next.getDate() + 1);
 
-  const delay = next - now;
-
   setTimeout(async () => {
     try {
       const top     = await getDailyMVP();
@@ -154,11 +150,9 @@ function scheduleDailyMVP(client) {
       let text = "🔥 DAILY MVP TOP 10\n\n";
       top.forEach((p, i) => { text += `#${i + 1} ${p.name} — ${p.ebal} єБалів\n`; });
       if (top.length) await channel.send(text);
-    } catch (e) {
-      console.error("scheduleDailyMVP error:", e.message);
-    }
+    } catch (e) { console.error("scheduleDailyMVP error:", e.message); }
     scheduleDailyMVP(client);
-  }, delay);
+  }, next - now);
 }
 
 function scheduleWeeklyMVP(client) {
@@ -170,8 +164,6 @@ function scheduleWeeklyMVP(client) {
   next.setDate(now.getDate() + diff);
   next.setHours(12, 0, 0, 0);
 
-  const delay = next - now;
-
   setTimeout(async () => {
     try {
       const top     = await getWeeklyMVP();
@@ -179,17 +171,14 @@ function scheduleWeeklyMVP(client) {
       let text = "🏆 WEEKLY MVP TOP\n\n";
       top.forEach((p, i) => { text += `#${i + 1} ${p.name} — ${p.ebal} єБалів\n`; });
       if (top.length) await channel.send(text);
-    } catch (e) {
-      console.error("scheduleWeeklyMVP error:", e.message);
-    }
+    } catch (e) { console.error("scheduleWeeklyMVP error:", e.message); }
     scheduleWeeklyMVP(client);
-  }, delay);
+  }, next - now);
 }
 
 // ================ PUBG API HELPERS ================
 async function getPlayerMVPBreakdown(name) {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-
   const { data, error } = await supabase
     .from("snapshots")
     .select("*")
@@ -227,14 +216,11 @@ async function getCurrentSeason(platform) {
   return season.id;
 }
 
-// FIX: використовуємо queuedApiGet замість apiGet — всі запити через одну чергу
-// FIX: параметр platform дозволяє пропускати зайву платформу якщо вже відома
 async function getStats(name, knownPlatform = null) {
-  const cacheKey = name + (knownPlatform || "");
+  const cacheKey = name + "|" + (knownPlatform || "any");
   const cached = cache.get(cacheKey);
   if (cached && Date.now() - cached.time < CACHE_TIME) return cached.data;
 
-  // якщо платформа відома — перевіряємо лише її, не витрачаємо запити на іншу
   const platforms = knownPlatform ? [knownPlatform] : ["psn", "xbox"];
   let best = null;
 
@@ -284,9 +270,7 @@ async function getStats(name, knownPlatform = null) {
             rankPoints = bestMode.currentRankPoint    || 0;
           }
         }
-      } catch (e) {
-        // ranked може бути недоступний — не критично
-      }
+      } catch (e) { /* ranked недоступний — не критично */ }
 
       const result = {
         kills, wins, matches,
@@ -323,10 +307,10 @@ function hasAdminPermission(member) {
   if (!member) return false;
   if (member.permissions.has("Administrator")) return true;
   if (member.roles?.cache) {
-    const superAdminRole = member.roles.cache.find(
+    const r = member.roles.cache.find(
       role => role.name.toLowerCase().replace(/[-_]/g, " ") === "супер адмін"
     );
-    if (superAdminRole) return true;
+    if (r) return true;
   }
   return false;
 }
@@ -357,12 +341,11 @@ async function handleStats(message, name) {
 }
 
 // ================ UPDATE PLATFORMS ================
-// Запускається один раз при старті — визначає платформу для гравців у яких її немає
 async function updatePlayersPlatform() {
   const { data: players, error } = await supabase
     .from("players")
     .select("*")
-    .is("platform", null); // FIX: беремо тільки тих у кого platform = null
+    .is("platform", null);
 
   if (error) { console.error("updatePlayersPlatform error:", error); return; }
   if (!players?.length) { console.log("✅ Всі платформи вже визначені"); return; }
@@ -371,7 +354,6 @@ async function updatePlayersPlatform() {
 
   for (const player of players) {
     let foundPlatform = null;
-
     for (const platform of ["psn", "xbox"]) {
       try {
         const res = await queuedApiGet(
@@ -382,10 +364,7 @@ async function updatePlayersPlatform() {
     }
 
     if (foundPlatform) {
-      await supabase
-        .from("players")
-        .update({ platform: foundPlatform })
-        .eq("discord_id", player.discord_id);
+      await supabase.from("players").update({ platform: foundPlatform }).eq("discord_id", player.discord_id);
       console.log(`✅ ${player.game_name} → ${foundPlatform}`);
     } else {
       console.warn(`⚠️ Платформу не знайдено для ${player.game_name}`);
@@ -396,8 +375,13 @@ async function updatePlayersPlatform() {
 }
 
 // ================ MVP SNAPSHOT ================
+// Snapshot розбитий на батчі по BATCH_SIZE гравців.
+// Між батчами — пауза BATCH_PAUSE_MS щоб дати API "відпочити".
+// При 21 гравці і батчі 5: 5гр×3запити=15 запитів, потім пауза, і так далі.
+const BATCH_SIZE    = 5;
+const BATCH_PAUSE_MS = 30000; // 30 сек між батчами
+
 async function takeSnapshot() {
-  // FIX: захист від паралельного запуску (наприклад !snapshot + setInterval одночасно)
   if (snapshotRunning) {
     console.log("⏳ Snapshot вже виконується, пропускаємо");
     return;
@@ -408,53 +392,67 @@ async function takeSnapshot() {
     const { data: players, error } = await supabase.from("players").select("*");
     if (error) { console.error("Snapshot fetch players error:", error); return; }
 
-    console.log(`📸 Починаємо snapshot для ${players.length} гравців...`);
+    console.log(`📸 Snapshot: ${players.length} гравців, батчі по ${BATCH_SIZE}`);
 
-    for (const player of players) {
-      try {
-        // FIX: передаємо platform гравця — пропускає зайву платформу і вдвічі менше запитів
-        const stats = await getStats(player.game_name, player.platform || null);
-        if (!stats) {
-          console.warn(`⚠️ Немає статів для ${player.game_name}`);
-          continue;
+    // Розбиваємо на батчі
+    for (let i = 0; i < players.length; i += BATCH_SIZE) {
+      const batch = players.slice(i, i + BATCH_SIZE);
+      const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+      const totalBatches = Math.ceil(players.length / BATCH_SIZE);
+
+      console.log(`📦 Батч ${batchNum}/${totalBatches} (гравці ${i + 1}–${Math.min(i + BATCH_SIZE, players.length)})`);
+
+      for (const player of batch) {
+        try {
+          const stats = await getStats(player.game_name, player.platform || null);
+          if (!stats) {
+            console.warn(`⚠️ Немає статів для ${player.game_name}`);
+            continue;
+          }
+
+          const kills   = stats.kills   || 0;
+          const wins    = stats.wins    || 0;
+          const matches = stats.matches || 0;
+          const damage  = Math.floor(Number(stats.damage || 0));
+
+          const eBal =
+            kills * 1 +
+            Math.floor(damage / 200) * 1 +
+            wins * 20 +
+            Math.floor(matches / 2);
+
+          const { error: insertError } = await supabase.from("snapshots").insert({
+            discord_id: player.discord_id,
+            game_name:  player.game_name,
+            kills, wins, matches, damage,
+            ebal: Math.floor(eBal)
+          });
+
+          if (insertError) console.error("Snapshot insert error:", insertError);
+
+          // Видалення знімків старших 7 днів
+          const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+          await supabase.from("snapshots").delete()
+            .eq("discord_id", player.discord_id)
+            .lt("created_at", cutoff);
+
+          console.log(`✅ ${player.game_name}: kills=${kills} wins=${wins} ebal=${Math.floor(eBal)}`);
+
+        } catch (e) {
+          console.error(`❌ Snapshot skip ${player.game_name}:`, e.message);
         }
+      }
 
-        const kills   = stats.kills   || 0;
-        const wins    = stats.wins    || 0;
-        const matches = stats.matches || 0;
-        const damage  = Math.floor(Number(stats.damage || 0));
-
-        const eBal =
-          kills * 1 +
-          Math.floor(damage / 200) * 1 +
-          wins * 20 +
-          Math.floor(matches / 2);
-
-        const { error: insertError } = await supabase.from("snapshots").insert({
-          discord_id: player.discord_id,
-          game_name:  player.game_name,
-          kills, wins, matches, damage,
-          ebal: Math.floor(eBal)
-        });
-
-        if (insertError) console.error("Snapshot insert error:", insertError);
-
-        // FIX: видалення старих знімків повернуто — без цього таблиця росте безкінечно
-        const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-        await supabase
-          .from("snapshots")
-          .delete()
-          .eq("discord_id", player.discord_id)
-          .lt("created_at", cutoff);
-
-      } catch (e) {
-        console.error(`❌ Snapshot skip ${player.game_name}:`, e.message);
+      // Пауза між батчами (крім останнього)
+      if (i + BATCH_SIZE < players.length) {
+        console.log(`⏸ Пауза ${BATCH_PAUSE_MS / 1000}с між батчами...`);
+        await sleep(BATCH_PAUSE_MS);
       }
     }
 
     console.log("✅ Snapshots taken");
+
   } finally {
-    // FIX: знімаємо прапор навіть якщо була помилка
     snapshotRunning = false;
   }
 }
@@ -471,14 +469,10 @@ const client = new Client({
 client.once("ready", async () => {
   console.log(`Discord logged in as ${client.user.tag}`);
 
-  // FIX: updatePlayersPlatform запускається першою і чекає завершення
-  // перед тим як стартувати snapshot — уникаємо race condition між ними
   await updatePlayersPlatform();
 
-  // Перший snapshot через 15 сек після визначення платформ
+  // Перший snapshot через 15 сек після старту
   setTimeout(() => takeSnapshot(), 15000);
-
-  // Снапшоти щогодини
   setInterval(() => takeSnapshot(), 60 * 60 * 1000);
 
   scheduleDailyMVP(client);
@@ -494,7 +488,6 @@ client.on("messageCreate", async (message) => {
 
     console.log("CMD:", content);
 
-    // !ping (тест)
     if (content === "!ping") {
       return message.channel.send("pong");
     }
@@ -530,7 +523,6 @@ client.on("messageCreate", async (message) => {
     if (content.startsWith("!mvpinfo")) {
       const name = content.split(" ")[1];
       if (!name) return message.reply("Use: !mvpinfo nickname");
-
       const info = await getPlayerMVPBreakdown(name);
       if (!info) return message.reply("❌ No data for this player (last 24h)");
 
@@ -550,20 +542,16 @@ client.on("messageCreate", async (message) => {
       return message.channel.send({ embeds: [embed] });
     }
 
-    // !skipua — реєстрація в базі
+    // !skipua
     if (content.startsWith("!skipua")) {
       const gameName = content.split(" ").slice(1).join(" ");
       if (!gameName) return message.reply("❌ Напиши свій PUBG нік\nПриклад: !skipua Nick");
 
       const { data: existingPlayer } = await supabase
-        .from("players")
-        .select("discord_id")
-        .eq("discord_id", message.author.id)
-        .single();
+        .from("players").select("discord_id").eq("discord_id", message.author.id).single();
 
       if (existingPlayer) return message.reply("❌ Ти вже зареєстрований.");
 
-      // FIX: прибрано undefined змінну 'platform' — тепер правильно ["psn", "xbox"]
       let found = false;
       let foundPlatform = null;
       for (const plt of ["psn", "xbox"]) {
@@ -577,7 +565,6 @@ client.on("messageCreate", async (message) => {
 
       if (!found) return message.reply("❌ Такий PUBG нік не знайдено. Перевір написання.");
 
-      // FIX: зберігаємо платформу одразу при реєстрації — менше роботи для updatePlayersPlatform
       const { error } = await supabase.from("players").upsert({
         discord_id:    message.author.id,
         discord_name:  message.author.username,
@@ -594,9 +581,7 @@ client.on("messageCreate", async (message) => {
       try {
         const role = message.guild.roles.cache.get(SKIPUA_ROLE_ID);
         if (role && member) await member.roles.add(role);
-      } catch (err) {
-        console.error("Role error:", err);
-      }
+      } catch (err) { console.error("Role error:", err); }
 
       const embed = new EmbedBuilder()
         .setColor(0x005BBB)
@@ -628,14 +613,12 @@ client.on("messageCreate", async (message) => {
     if (content === "!mvp") {
       const top = await getDailyMVP();
       if (!top.length) return message.reply("No MVP data today.");
-
       let text = "🔥 **ЩОДЕННИЙ MVP ТОП-10** 🔥\n\n";
       top.forEach((p, i) => {
-        let medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "🏅";
+        const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "🏅";
         text += `${medal} **#${i + 1} ${p.name}** — ${p.ebal} єБалів\n`;
       });
       text += "\n⚡ єБали нараховуються за активність у PUBG\n🏆 Наприкінці сезону найактивніші гравці братимуть участь у розіграшах G-Coin";
-
       return message.channel.send(text);
     }
 
@@ -643,18 +626,15 @@ client.on("messageCreate", async (message) => {
     if (content === "!mvpw") {
       const top = await getWeeklyMVP();
       if (!top.length) return message.reply("No MVP data this week.");
-
-      let text = "🏆 **ТИЖНЕВИЙ РЕЙТИНГ SKIP UA** 🏆\n";
-      text += "━━━━━━━━━━━━━━━━━━━━━━\n\n";
+      let text = "🏆 **ТИЖНЕВИЙ РЕЙТИНГ SKIP UA** 🏆\n━━━━━━━━━━━━━━━━━━━━━━\n\n";
       top.forEach((p, i) => {
-        let medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "🏅";
+        const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "🏅";
         text += `${medal} **#${i + 1} ${p.name}** — ${p.ebal} єБалів\n`;
       });
       text += "\n━━━━━━━━━━━━━━━━━━━━━━\n";
       text += "⚡ Рейтинг формується за активністю за 7 днів\n";
       text += "🎯 Найактивніші гравці отримують пріоритет у івентах та розіграшах G-Coin\n";
       text += "🔥 SKIP UA COMMUNITY";
-
       return message.channel.send(text);
     }
 
@@ -718,26 +698,17 @@ client.on("messageCreate", async (message) => {
     // !list
     if (content === "!list") {
       if (registeredPlayers.size === 0) return message.channel.send("❌ No players registered yet.");
-
       const membersArr = await Promise.all(
-        Array.from(registeredPlayers).map(id =>
-          message.guild.members.fetch(id).catch(() => null)
-        )
+        Array.from(registeredPlayers).map(id => message.guild.members.fetch(id).catch(() => null))
       );
-
       const names = membersArr.filter(m => m).map((m, i) => `${i + 1}. ${m.user.username}`);
-
       const embed = new EmbedBuilder()
-        .setColor(0x00bfff)
-        .setTitle("🎮 REGISTERED PLAYERS")
-        .setDescription(names.join("\n"))
+        .setColor(0x00bfff).setTitle("🎮 REGISTERED PLAYERS").setDescription(names.join("\n"))
         .addFields(
           { name: "👥 Total Players", value: `${registeredPlayers.size}`, inline: true },
           { name: "🎯 Format", value: customMatchFormat ? (customMatchFormat === 1 ? "Solo" : `${customMatchFormat} players/team`) : "Not set", inline: true }
         )
-        .setFooter({ text: "SKIP UA CUSTOM MATCH" })
-        .setTimestamp();
-
+        .setFooter({ text: "SKIP UA CUSTOM MATCH" }).setTimestamp();
       return message.channel.send({ embeds: [embed] });
     }
 
@@ -745,53 +716,37 @@ client.on("messageCreate", async (message) => {
     if (content.startsWith("!maketeams")) {
       if (!hasAdminPermission(member)) return message.reply("You don't have permission.");
       if (registrationOpen) return message.reply("❌ Close registration first with !closereg.");
-
       const teamSize = parseInt(content.split(" ")[1]);
       if (![1, 2, 3, 4, 6].includes(teamSize)) return message.reply("Usage: !maketeams 1|2|3|4|6");
-
       const playerIds = Array.from(registeredPlayers);
       if (playerIds.length < teamSize * 2) return message.reply("❌ Not enough players.");
       if (playerIds.length % teamSize !== 0) return message.reply(`❌ ${playerIds.length} players cannot be divided into teams of ${teamSize}.`);
-
       shuffle(playerIds);
       lastTeamSize = teamSize;
-
       let response = "🔥 RANDOM TEAMS\n\n";
-      const teamsCount = playerIds.length / teamSize;
-
-      for (let i = 0; i < teamsCount; i++) {
+      for (let i = 0; i < playerIds.length / teamSize; i++) {
         const team  = playerIds.slice(i * teamSize, (i + 1) * teamSize);
-        const names = await Promise.all(
-          team.map(id => message.guild.members.fetch(id).then(m => m.user.username).catch(() => "Unknown"))
-        );
+        const names = await Promise.all(team.map(id => message.guild.members.fetch(id).then(m => m.user.username).catch(() => "Unknown")));
         response += `🛡 Team ${i + 1}\n${names.join("\n")}\n\n`;
       }
-
       return message.channel.send(response);
     }
 
     // !announce
     if (content === "!announce") {
       if (!hasAdminPermission(member)) return message.reply("You don't have permission.");
-
-      const event = {
-        title: "SKIP UA CUSTOM MATCH", date: "Субота", time: "20:00",
-        timezone: "за київським часом", game: "PUBG Console", formats: "2x2 • 4x4 • Arcade 6x6"
-      };
-
       const embed = new EmbedBuilder()
-        .setColor(0x005BBB)
-        .setTitle(`🔥 ${event.title}`)
+        .setColor(0x005BBB).setTitle("🔥 SKIP UA CUSTOM MATCH")
         .setDescription(
-`📅 ${event.date}
-⏰ ${event.time} (${event.timezone})
+`📅 Субота
+⏰ 20:00 (за київським часом)
 
-🎮 ${event.game}
+🎮 PUBG Console
 
 🟢 Реєстрація відкрита
 
 👥 Формати:
-${event.formats}
+2x2 • 4x4 • Arcade 6x6
 
 📝 Участь:
 \`!register\`
@@ -801,9 +756,7 @@ ${event.formats}
 
 🇺🇦 SKIP UA`
         )
-        .setFooter({ text: "Winner Winner Chicken Dinner 🍗" })
-        .setTimestamp();
-
+        .setFooter({ text: "Winner Winner Chicken Dinner 🍗" }).setTimestamp();
       return message.channel.send({ content: "@everyone", embeds: [embed] });
     }
 
@@ -812,7 +765,6 @@ ${event.formats}
       if (!hasAdminPermission(member)) return message.reply("You don't have permission to do this.");
       if (registrationOpen) return message.reply("Please close registration before starting the match.");
       if (!customMatchFormat) return message.reply("Set match format first.");
-
       const count = registeredPlayers.size;
       if (count < (customMatchFormat === 1 ? 1 : customMatchFormat * 2)) return message.reply("Not enough players.");
       if (customMatchFormat !== 1 && count % customMatchFormat !== 0)
@@ -820,39 +772,26 @@ ${event.formats}
 
       const playersArray = Array.from(registeredPlayers);
       shuffle(playersArray);
-
       const selectedMap = maps[Math.floor(Math.random() * maps.length)];
       let response = `Map selected for the match: **${selectedMap}**\n\n`;
-      let matchData = {};
 
       if (customMatchFormat === 1) {
-        const memberNames = await Promise.all(
-          playersArray.map(id => message.guild.members.fetch(id).then(m => m.user.username).catch(() => "Unknown"))
-        );
+        const memberNames = await Promise.all(playersArray.map(id => message.guild.members.fetch(id).then(m => m.user.username).catch(() => "Unknown")));
         response += "Solo mode match started! Players:\n" + memberNames.join("\n");
-        matchData = { players: memberNames };
-        await supabase.from("matches").insert({ format: "Solo", map: selectedMap, data: matchData });
+        await supabase.from("matches").insert({ format: "Solo", map: selectedMap, data: { players: memberNames } });
         registeredPlayers.clear();
         return message.channel.send(response);
       } else {
         const teamsCount = count / customMatchFormat;
         response += `Match started! Forming ${teamsCount} teams with ${customMatchFormat} players each.\n\n`;
         let teams = [];
-
         for (let i = 0; i < teamsCount; i++) {
           const team        = playersArray.slice(i * customMatchFormat, (i + 1) * customMatchFormat);
-          const memberNames = await Promise.all(
-            team.map(id => message.guild.members.fetch(id).then(m => m.user.username).catch(() => "Unknown"))
-          );
+          const memberNames = await Promise.all(team.map(id => message.guild.members.fetch(id).then(m => m.user.username).catch(() => "Unknown")));
           response += `**Team ${i + 1}**: ${memberNames.join(", ")}\n\n`;
           teams.push(memberNames);
         }
-
-        await supabase.from("matches").insert({
-          format: `${customMatchFormat}x${customMatchFormat}`,
-          map: selectedMap, data: { teams }
-        });
-
+        await supabase.from("matches").insert({ format: `${customMatchFormat}x${customMatchFormat}`, map: selectedMap, data: { teams } });
         registeredPlayers.clear();
         return message.channel.send(response);
       }
@@ -870,18 +809,10 @@ ${event.formats}
     // !matchhistory
     if (content === "!matchhistory") {
       const { data: matches, error } = await supabase
-        .from("matches")
-        .select("*")
-        .order("played_at", { ascending: false })
-        .limit(5);
-
+        .from("matches").select("*").order("played_at", { ascending: false }).limit(5);
       if (error || !matches?.length) return message.channel.send("Match history is empty.");
-
       let text = "Last matches:\n\n";
-      matches.forEach((m, i) => {
-        text += `${i + 1}. ${m.played_at} | Format: ${m.format} | Map: ${m.map}\n`;
-      });
-
+      matches.forEach((m, i) => { text += `${i + 1}. ${m.played_at} | Format: ${m.format} | Map: ${m.map}\n`; });
       return message.channel.send(text);
     }
 
@@ -892,25 +823,3 @@ ${event.formats}
 
 client.login(process.env.DISCORD_TOKEN);
 
-// ================ TELEGRAM ================
-const tg = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
-
-tg.onText(/\/stats (.+)/, async (msg, match) => {
-  const chatId = msg.chat.id;
-  const name   = match[1];
-
-  const data = await getStats(name);
-  if (!data) return tg.sendMessage(chatId, "❌ Player not found");
-
-  const kd      = (data.kills / (data.matches || 1)).toFixed(2);
-  const winrate = ((data.wins  / (data.matches || 1)) * 100).toFixed(1);
-
-  const text =
-    `🎮 PUBG PLAYER PROFILE\n\n` +
-    `👤 ${name}\n🖥 Platform: ${data.platform.toUpperCase()}\n\n` +
-    `📊 Kills: ${data.kills}\n🎯 Matches: ${data.matches}\n🏆 Wins: ${data.wins}\n\n` +
-    `⚔️ K/D: ${kd}\n📊 Winrate: ${winrate}%\n🔥 Rate: ${data.rate}\n\n` +
-    `🏅 Rank: ${data.tier} ${data.subTier}\n📊 RP: ${data.rankPoints}`;
-
-  tg.sendMessage(chatId, text);
-});
