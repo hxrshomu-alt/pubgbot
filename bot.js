@@ -460,11 +460,14 @@ const client = new Client({
   ]
 });
 
-client.once("ready", () => {
+client.once("ready", async () => {
   console.log(`Discord logged in as ${client.user.tag}`);
+
   await updatePlayersPlatform();
+
   setInterval(() => takeSnapshot(), 60 * 60 * 1000);
   setTimeout(() => takeSnapshot(), 10000);
+
   scheduleDailyMVP(client);
   scheduleWeeklyMVP(client);
 });
