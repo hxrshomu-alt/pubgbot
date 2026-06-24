@@ -218,11 +218,11 @@ async function getCurrentSeason(platform) {
 
 // FIX: відновлено єдиний цілісний try/catch на платформу —
 // ranked блок знаходиться всередині того самого try, де оголошені player/modes/tier
-async function getStats(name) {
+async function getStats(name, platform) {
   const cached = cache.get(name);
   if (cached && Date.now() - cached.time < CACHE_TIME) return cached.data;
 
-  const platforms = ["psn", "xbox"];
+  const platforms = platform ? [platform] : ["psn", "xbox"];
   let best = null;
 
   for (const platform of platforms) {
@@ -541,7 +541,7 @@ client.on("messageCreate", async (message) => {
 
       if (existingPlayer) return message.reply("❌ Ти вже зареєстрований.");
 
-      const platforms = ["psn", "xbox"];
+      const platforms = platform ? [platform] : ["psn", "xbox"];
       let found = false;
       for (const platform of platforms) {
         try {
@@ -554,12 +554,13 @@ client.on("messageCreate", async (message) => {
 
       if (!found) return message.reply("❌ Такий PUBG нік не знайдено. Перевір написання.");
 
-      const { error } = await supabase.from("players").insert({
-        discord_id:    message.author.id,
-        discord_name:  message.author.username,
-        game_name:     gameName,
-        registered_at: new Date().toISOString()
-      }, { onConflict: "discord_id" });
+      const { error } = await supabase.from("players").upsert({
+  discord_id: message.author.id,
+  discord_name: message.author.username,
+  game_name: gameName,
+  platform: null, // або "unknown" поки не визначено
+  registered_at: new Date().toISOString()
+}, { onConflict: "discord_id" });
 
       if (error) {
         console.error("Supabase upsert error:", error);
